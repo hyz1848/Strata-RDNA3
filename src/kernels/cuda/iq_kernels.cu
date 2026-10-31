@@ -732,19 +732,43 @@ __device__ __forceinline__ float vec_dot_tq_q8_1(const void* __restrict__ vbq, c
 // is only 2-byte aligned (block strides are 42/50/58 bytes).
 template<int TY>
 __device__ __forceinline__ void tqp_states8(const uint8_t* __restrict__ qs, int lane, uint32_t s[8]) {
-    constexpr int K = TqInfo<TY>::K, NB = 8 * K, NW = K + 2 < 8 ? K + 2 : 8;
+    constexpr int K = TqInfo<TY>::K, NB = 8 * K;
     const int pidx = (7 - lane) * K;          // the lane's first byte, always < NB
-    uint64_t w = 0;                           // bits pidx*8 .. pidx*8+63
+    if constexpr (K <= 6) {
+        // one 64-bit load takes the lane's K + 2 bytes (8 for K 5 and 6), where the stream is circular: the bytes
+        // past qs + NB wrap to qs[0..), so the load's top `over` bytes are dropped and qs[0..over) takes their place
+        const int over = pidx + 8 - NB;
+        uint64_t w = *(const uint64_t*) (qs + pidx);
+        if (over > 0) {
+            w &= (1ULL << (8 * (8 - over))) - 1;
+            uint64_t head = 0;
 #pragma unroll
-    for (int j = 0; j < NW; ++j) {
-        const int idx0 = pidx + j;
-        w |= (uint64_t) qs[idx0 < NB ? idx0 : idx0 - NB] << (8 * j);
+            for (int i = 0; i < 4; ++i) if (i < over) head |= (uint64_t) qs[i] << (8 * (8 - over + i));
+            w |= head;
+        }
+#pragma unroll
+        for (int i = 0; i < 8; ++i) s[i] = (uint32_t) (w >> ((7 - i) * K)) & 0xFFFFu;
+        return;
     }
+    // K 7: the lane needs 9 bytes, one of them (bit 64) outside the 64-bit window; the byte window keeps it in range
+    constexpr int NW16 = (K + 4) / 2;
+    const int base = pidx & ~1, sh0 = (pidx & 1) * 8;
+    uint64_t lo = 0, up = 0;
+#pragma unroll
+    for (int j = 0; j < NW16; ++j) {
+        const int idx0 = base + 2 * j;
+        const int i0 = idx0 < NB ? idx0 : idx0 - NB;
+        const int i1 = i0 + 1 < NB ? i0 + 1 : 0;
+        const uint64_t word = (uint64_t) (qs[i0] | ((uint32_t) qs[i1] << 8));
+        if (16 * j < 64) lo |= word << (16 * j);
+        else up |= word << (16 * j - 64);
+    }
+    const uint64_t w = sh0 ? ((lo >> sh0) | (up << (64 - sh0))) : lo;
     const int i8 = pidx + 8;
-    const uint32_t hi = K == 7 ? (uint32_t) qs[i8 < NB ? i8 : i8 - NB] : 0u;   // the 65th bit
+    const uint32_t hi = (uint32_t) qs[i8 < NB ? i8 : i8 - NB];   // the 65th bit
 #pragma unroll
     for (int i = 0; i < 8; ++i) {
-        const int sh = (7 - i) * K;                               // 0 .. 7K (<= 49)
+        const int sh = (7 - i) * K;
         const uint32_t lo = (uint32_t) (w >> sh);
         const uint32_t top = sh > 48 ? (uint32_t) (hi << (64 - sh)) : 0u;
         s[i] = (lo | top) & 0xFFFFu;
@@ -1495,6 +1519,25 @@ __device__ __forceinline__ void row_dot_multi(const uint8_t* row, const block_q8
     using S = Split<TY>;
 #pragma unroll
     for (int c = 0; c < NC; ++c) s[c] = 0.0f;
+    if (nb * F::ipb == 160) {   // the trellis rows: 5 dots a lane, the count known, so every load is issued up front
+        typename S::W w[5];
+#pragma unroll
+        for (int p = 0; p < 5; ++p) {
+            const int k = lane + 32 * p;
+            w[p] = S::template load<STAGE_GRID>(row, k / F::ipb, F::step * (k % F::ipb), s_grid);
+        }
+#pragma unroll
+        for (int p = 0; p < 5; ++p) {
+            const int k = lane + 32 * p, kbx = k / F::ipb, iqs = F::step * (k % F::ipb);
+#pragma unroll
+            for (int c = 0; c < NC; ++c)
+                if (EXACT_N || c < n) s[c] += S::apply(w[p], x + off[c] + kbx * (F::qk / 32), iqs);
+        }
+#pragma unroll
+        for (int c = 0; c < NC; ++c)
+            if (EXACT_N || c < n) s[c] = warp_sum(s[c]);
+        return;
+    }
     for (int k = lane; k < nb * F::ipb; k += 32) {
         const int kbx = k / F::ipb, iqs = F::step * (k % F::ipb);
         const typename S::W w = S::template load<STAGE_GRID>(row, kbx, iqs, s_grid);
@@ -1956,7 +1999,7 @@ __global__ void __launch_bounds__(256) native_gu_kernel(const unsigned long long
 constexpr int GRP_NC = 4;
 
 template<int TG, bool STAGE_GRID = kStageIqGrid<TG>, bool SUB16 = true>
-__global__ void __launch_bounds__(256) native_gu_multi_kernel(const unsigned long long* __restrict__ grp_ptr,
+__global__ void __launch_bounds__(256) __attribute__((amdgpu_wavefrontsize(32))) native_gu_multi_kernel(const unsigned long long* __restrict__ grp_ptr,
                                                               const int32_t* __restrict__ grp_start,
                                                               const int32_t* __restrict__ n_groups,
                                                               const int32_t* __restrict__ ent_tok,
@@ -2221,7 +2264,7 @@ __device__ __forceinline__ void row_dot_sub8(const uint8_t* row, const block_q8_
 
 // native_down_kernel with the entries taken GRP_NC at a time
 template<int TD, bool SUB_DOWN = true, bool STAGE_TQ = false>
-__global__ void __launch_bounds__(256) native_down_multi_kernel(const unsigned long long* __restrict__ grp_ptr,
+__global__ void __launch_bounds__(256) __attribute__((amdgpu_wavefrontsize(32))) native_down_multi_kernel(const unsigned long long* __restrict__ grp_ptr,
                                                                 const int32_t* __restrict__ grp_start,
                                                                 const int32_t* __restrict__ n_groups,
                                                                 const int32_t* __restrict__ ent_dst,
@@ -3455,7 +3498,10 @@ bool tq_stage_on() {
 // (CUDA only: the AMD builds keep the old kernels), STRATA_IQ_STAGE_GRID=0 as for every staged table.
 bool tq_sub8_on() {
 #if defined(__HIPCC__)
-    return false;
+    // the 8-lane sub-warp mapping keeps every shuffle inside its group (xor 1, 2, 4), so a wave64 keeps the same
+    // per-row sums; enabled here as an experiment (STRATA_TQ_SUB8=0 turns it off)
+    static const bool on = [] { const char* v = std::getenv("STRATA_TQ_SUB8"); return !(v != nullptr && v[0] == '0'); }();
+    return on && g_stage_grid && !g_no_sub16_gu && !tq_stage_on();
 #else
     static const bool on = [] {
         const char* v = std::getenv("STRATA_TQ_STAGE");
@@ -4202,7 +4248,7 @@ void launch_gu(dim3 grid, cudaStream_t s, const unsigned long long* grp_ptr, con
     if constexpr (!kSplit<TG>) native_gu_kernel<TG><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_tok, X, L, gate, up);
     else if (g_old_kernels || split_off<TG>()) native_gu_kernel<TG><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_tok, X, L, gate, up);
     else if constexpr (kStageIqGrid<TG>) {
-        if constexpr (TG == 144 || TG == 145) {   // tq_sub8_on: the 8-lane trellis rows, 32 rows a block
+        if constexpr (TG == 144 || TG == 145 || TG == 147 || TG == 148 || TG == 149) {   // tq_sub8_on: the 8-lane trellis rows, 32 rows a block
             if (tq_sub8_on() && (L.n_embd / Fmt<TG>::qk) * Fmt<TG>::ipb == 160) {
                 dim3 g8 = grid;
                 g8.x = (unsigned) ((2 * L.n_ff + 31) / 32);

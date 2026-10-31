@@ -42,16 +42,6 @@ export function requiresRealEngine() {
 }
 
 /** Where the Strata API worker is, if it was named explicitly. */
-function serverKey() {
-  const raw = process.env.STRATA_SERVER_KEY?.trim();
-  return raw || null;
-}
-
-function authHeaders() {
-  const key = serverKey();
-  return key ? { authorization: `Bearer ${key}` } : {};
-}
-
 function strataUrl() {
   const raw = process.env.STRATA_SERVER_URL?.trim();
   if (!raw) return STRATA_DEFAULT_URL;
@@ -68,12 +58,12 @@ function strataUrl() {
  */
 async function probeStrata(baseUrl) {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { headers: authHeaders(), signal: AbortSignal.timeout(900) });
+    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { signal: AbortSignal.timeout(900) });
     if (!res.ok) return null;
     const status = await res.json().catch(() => null);
     if (!status || typeof status !== 'object') return null;
     if (status.service !== 'strata') return null;
-    const models = await fetch(`${baseUrl}/models`, { headers: authHeaders(), signal: AbortSignal.timeout(900) })
+    const models = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(900) })
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     return {
@@ -259,7 +249,7 @@ export async function proxyCompletion({ baseUrl, message, history = [], systemPr
   const sampling = { temperature: defaults['sample.temp'] ?? 0.6, top_p: defaults['sample.topP'] ?? 0.95, top_k: defaults['sample.topK'] ?? 40, repeat_penalty: defaults['sample.repeat'] ?? 1.05, seed: defaults['sample.seed'] ?? -1, experimental_speed_projection: defaults['sample.speedProjection'] ?? true, ...(Number(defaults['sample.maxTokens']) > 0 ? {max_tokens: Number(defaults['sample.maxTokens'])} : {}) };
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders(), ...(authorization?{authorization:`Bearer ${authorization}`} :supervised && getStore().serving?.apiKey ? { authorization: `Bearer ${getStore().serving.apiKey}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(authorization?{authorization:`Bearer ${authorization}`} :supervised && getStore().serving?.apiKey ? { authorization: `Bearer ${getStore().serving.apiKey}` } : {}) },
     signal,
     body: JSON.stringify({
       model: modelId,

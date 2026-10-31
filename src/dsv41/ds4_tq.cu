@@ -26,7 +26,6 @@
 #define DS4_TQ_WMMA 1
 #endif
 
-
 #if !defined(STRATA_USE_HIP) && defined(__CUDACC__)   // (HIP's non-sync shuffle name, for the portable lane on CUDA)
 #define __shfl_xor(v, m) __shfl_xor_sync(0xffffffffu, (v), (m))
 #endif
@@ -41,7 +40,6 @@ constexpr int kMaxEnt = 16;   // entries (columns) a pass
 typedef _Float16 half8_t __attribute__((ext_vector_type(8)));
 typedef float float8_t __attribute__((ext_vector_type(8)));
 #endif
-
 
 constexpr bool computed_code(int type) { return type == kTQK5X || type == kTQK4X; }
 

@@ -1739,12 +1739,7 @@ bool MtpDrafter::draft(int T, const int32_t* tokens, int64_t p, int a, int32_t* 
         float pj = ((volatile float*) h_prob_)[0];
         if (probs) probs[0] = pj;
         n = 1;
-        // STRATA_SPEC_CUM=S: stop drafting once the chance that every draft so far holds (the product of
-        // the draft layer's probabilities) falls below S; it only chooses the window, the output is unchanged
-        static const double spec_cum = [] { const char* e = std::getenv("STRATA_SPEC_CUM"); return e ? std::atof(e) : 0.0; }();
-        double cum = pj;
-        for (int j = 1; j < max_steps && (chain_rule_ ? chain_rule_(j - 1, pj)
-                                                      : pj >= min_p && (spec_cum <= 0.0 || cum >= spec_cum)); ++j) {
+        for (int j = 1; j < max_steps && (chain_rule_ ? chain_rule_(j - 1, pj) : pj >= min_p); ++j) {
             if (dt) cudaEventRecord(g_dt.eb[j], cs_);
             tl = Clock::now();
             if (cudaGraphLaunch(cp ? step_exec_c_[j] : step_exec_[j], cs_) != cudaSuccess) {
@@ -1761,7 +1756,6 @@ bool MtpDrafter::draft(int T, const int32_t* tokens, int64_t p, int a, int32_t* 
             drafts[j] = ((volatile int32_t*) h_out_)[j];
             pj = ((volatile float*) h_prob_)[j];
             if (probs) probs[j] = pj;
-            cum *= (double) pj;
             ++n;
         }
         if (chain_rule_ && n >= max_steps) (void) chain_rule_(n - 1, pj);   // the last step of a full chain
