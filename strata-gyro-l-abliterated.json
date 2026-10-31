@@ -24,7 +24,7 @@
   "--kv",
   "int8",
   "--kv-resident",
-  "32768",
+  "49152",
   "--vision",
   "--trim-stage-weights",
   "--rope-scaling",
@@ -36,7 +36,9 @@
   "--conversation-cache-slots",
   "4",
   "--lookup-chain",
-  "3"
+  "3",
+  "--batch",
+  "4"
  ],
  "cwd": "/opt/Strata-main",
  "tokenizer": "/opt/Strata-data/packs/gyro-l-abliterated/tokenizer",
