@@ -43,4 +43,3 @@ strata-*.json
 bench/results/**/*.json
 bench/results/**/*.csv
 bench/results/**/*.log
-.github/workflows/
