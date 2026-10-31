@@ -1,0 +1,80 @@
+{
+ "exe": "/opt/Strata-020/engine/strata",
+ "args": [
+  "--pack",
+  "/opt/Strata-data/packs/huihui-swift-iq3s",
+  "--native",
+  "/opt/models/huihui-swift-iq3s/Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+  "--ple-gguf",
+  "/opt/models/huihui-swift-iq3s/Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+  "--expert-profile",
+  "/opt/Strata-main/data/expert-profile.bin",
+  "--expert-cache",
+  "auto",
+  "--prefill",
+  "auto:32768",
+  "--spec",
+  "3",
+  "--spec-min-p",
+  "0.75",
+  "--mtp",
+  "/opt/Strata-data/mtp/rt",
+  "--max-context",
+  "393216",
+  "--kv",
+  "int8",
+  "--kv-resident",
+  "32768",
+  "--vision",
+  "--vram-reserve-mib",
+  "3072",
+  "--trim-stage-weights",
+  "--rope-scaling",
+  "yarn",
+  "--rope-scale",
+  "1.5",
+  "--conversation-cache-mib",
+  "8192",
+  "--conversation-cache-slots",
+  "8"
+ ],
+ "cwd": "/opt/Strata-020",
+ "tokenizer": "/opt/Strata-data/packs/huihui-swift-iq3s/tokenizer",
+ "model_name": "qwen3.8-27b",
+ "log": "/opt/Strata-020/strata-020.log",
+ "lib_dirs": [
+  "/opt/Strata-main/.venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib"
+ ],
+ "port": 1236,
+ "backend": "hip",
+ "env": {
+  "STRATA_HIPBLASLT_TUNING": "/opt/Strata-main/tools/hip/gfx1100-hipblaslt-100500.txt"
+ },
+ "gpu": [
+  0,
+  1
+ ],
+ "gpus_asked": true,
+ "layer_split": "24",
+ "host": "0.0.0.0",
+ "parallel": 4,
+ "vision": {
+  "exe": "/opt/Strata-main/engine/strata-vision",
+  "mmproj": "/opt/models/huihui-swift-iq3s/mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
+  "model": "/opt/models/huihui-swift-iq3s/Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+  "gpu": false,
+  "max_tokens": 300,
+  "threads": 12
+ },
+ "cors_origins": [
+  "*"
+ ],
+ "fit_max_tokens": true,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "presence_penalty": 0.25
+ },
+ "reasoning_loop_recovery": "stop"
+}

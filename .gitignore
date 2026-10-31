@@ -1,0 +1,46 @@
+# build outputs
+build*/
+engine/
+bin/
+*.o
+*.a
+*.so
+*.dat
+
+# virtualenv and node deps
+.venv/
+node_modules/
+**/node_modules/
+apps/host/dist/
+
+# models, packs, runtime data (keep small manifests only)
+packs/
+data/*.bin
+models/
+*.gguf
+*.gguf.part*
+
+# logs and run artifacts
+*.log
+*.log.*
+*.jsonl
+.rocprofv3/
+tmp/
+
+# python
+__pycache__/
+*.pyc
+
+# local notes/backups
+*.bak
+*.bak-*
+LOCAL-NOTES.md
+strata-*.json
+!strata-gyro-l-abliterated.json
+!strata-swift-iq3s-huihui.json
+
+# big benchmark results (keep summaries only)
+bench/results/**/*.json
+bench/results/**/*.csv
+bench/results/**/*.log
+.github/workflows/
