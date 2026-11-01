@@ -1519,6 +1519,7 @@ __device__ __forceinline__ void row_dot_multi(const uint8_t* row, const block_q8
     using S = Split<TY>;
 #pragma unroll
     for (int c = 0; c < NC; ++c) s[c] = 0.0f;
+    if constexpr (kTqType<TY> || TY == 147 || TY == 148 || TY == 149) {   // the 160-dot trellis rows: not compiled for the IQ types (their row count cannot reach 160 at n_embd 2560), keeps their worst-case VGPR path down
     if (nb * F::ipb == 160) {   // the trellis rows: 5 dots a lane, the count known, so every load is issued up front
         typename S::W w[5];
 #pragma unroll
@@ -1537,6 +1538,7 @@ __device__ __forceinline__ void row_dot_multi(const uint8_t* row, const block_q8
         for (int c = 0; c < NC; ++c)
             if (EXACT_N || c < n) s[c] = warp_sum(s[c]);
         return;
+    }
     }
     for (int k = lane; k < nb * F::ipb; k += 32) {
         const int kbx = k / F::ipb, iqs = F::step * (k % F::ipb);
