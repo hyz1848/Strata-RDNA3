@@ -173,3 +173,32 @@ passes the parity suite.
 
 Current tree state (commit efbbe2d5 + notes): builds clean, verify.cpp merged, production
 running on it.
+
+## generate.cpp merged (2026-11-16, third pass)
+
+`generate.cpp` is now the 3-way merge of 0.1.59 and the fork, not a replacement:
+
+- Kept 0.1.59: the decode loop structure, `df2_*` (DFlash2 end update, deferred taps,
+  `dfr_*`), `GatedDraftLimit` / gated proposal, `draft_long` (--lookup-max-t), the penalty
+  history offset (`consumed.data() + pen_gen0`), `initial_round`, `keep_sync` + `late_apply`,
+  the `gdn_chunked` default and `apply_arch_defaults(..., batch)`.
+- Added from the fork: `tp2_want` / `tp_on` / `tpv`, the TP commit split and commit thread,
+  `set_commit_async(..., tp)`, the DP prompt link, `set_help_peer_residency`, `refill_order_prompt`,
+  `adapt_min_use` / `stage_of_swap` / `pending_card`, the merged `arm_prompt_helpers` lambda
+  (DP link + peer + layer-split helpers + the TP help_res block).
+- Fixed by hand: `AdaptGate::Tick` is 0.1.59's `{counter, layer}`; the merged
+  `arm_prompt_helpers` lambda had to be rebuilt (the fork's DP/TP blocks go inside it).
+
+`prefill.cpp` is still the fork's. 0.1.59's `generate.cpp` calls six Prefill entry points the
+fork's `prefill.cpp` does not implement; they live in `src/prefill/compat_0159.cpp`:
+
+- `run_multi` declines with "prefill: multi-prompt read declined: ...", the exact prefix
+  `generate.cpp` already treats as "read the prompt the usual way", so the batch co-read falls
+  back to `Prefill::run()` (no silent breakage).
+- `set_ring_room_active`, `idle`, `set_share_blocked`, `nibble_prompt_check`, `reserve_taps`
+  are no-ops/true: the features behind them (prompt ring room, nibble prompt layout, DFlash2
+  taps) are opt-in and were not ported into the fork's chunk loop.
+
+Verified: builds clean; verify_parity, verify_batch_parity, spec_verify_parity, gr_parity,
+gdn_parity, arch_defaults_test PASS; TP pair table applied (67 switches); 1K/6.5K decode
+134 / 150 tok/s, prefill 927 / 2,578 tok/s. Production restarted on this binary.
