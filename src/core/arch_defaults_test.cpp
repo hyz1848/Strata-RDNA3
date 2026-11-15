@@ -506,6 +506,7 @@ int main() {
         CHECK(pcie_start_frac(false, false, true, false, false) == 0.2);
     }
     std::printf(fails ? "arch_defaults_test: %d FAILED\n" : "arch_defaults_test: OK\n", fails);
+
     // ---- 0.2.7 CUDA defaults (sm120_series.hpp): which cards get which, and which never do
     {
         const double GiB = 1073741824.0;
@@ -652,6 +653,28 @@ int main() {
         CHECK(!spill_allowed(true, false));     // Metal: one pool, "free VRAM" is the OS's available RAM
         CHECK(!spill_allowed(false, true));     // an integrated GPU (Strix Halo gfx1151, APUs): the same
         CHECK(!spill_allowed(true, true));
+
+        {   // [claude] 2026-11-11: the gfx1100 table, by tier
+        unset("STRATA_GFX1100_DEFAULTS");
+        auto has = [](const std::vector<std::pair<std::string, std::string>>& t, const char* k, const char* v) {
+            for (const auto& kv : t) if (kv.first == k) return kv.second == v;
+            return false;
+        };
+        const auto a1 = gfx1100_default_env("gfx1100", 1, false), a2 = gfx1100_default_env("gfx1100", 2, true);
+        CHECK(has(a1, "STRATA_PF_NO_GATED", "1") && has(a1, "STRATA_HC_UPMIX", "1") && has(a1, "STRATA_RDNA_MMVQ_WAVE", "3"));
+        CHECK(has(a1, "STRATA_PREFILL_EQUAL", "1") && !has(a1, "STRATA_MEGAKERNEL", "1"));     // one card: tier C, not B
+        CHECK(has(a2, "STRATA_MEGAKERNEL", "1") && has(a2, "STRATA_TP_PREFILL", "1") && has(a2, "STRATA_DP_PREFILL", "1"));
+        CHECK(!has(a2, "STRATA_PREFILL_EQUAL", "1"));                                            // the pair: tier B, not C
+        CHECK(has(a1, "STRATA_ROUTE_TAIL_SKIP", "0") && has(a2, "STRATA_ROUTE_TAIL_SKIP", "0"));  // never drop experts
+        CHECK(gfx1100_default_env("gfx1101", 1, false).empty() && gfx1100_default_env("gfx1151", 1, false).empty());
+        CHECK(gfx1100_default_env(nullptr, 1, false).empty() && arch_default_env("gfx1100").empty());
+        put("STRATA_GFX1100_DEFAULTS", "0");
+        CHECK(gfx1100_default_env("gfx1100", 2, true).empty());
+        unset("STRATA_GFX1100_DEFAULTS");
+        put("STRATA_PF_NO_GATED", "0");                 // a user's value wins
+        apply_arch_defaults("gfx1100", false, 1, false);
+        CHECK(std::string(std::getenv("STRATA_PF_NO_GATED")) == "0" && std::string(std::getenv("STRATA_PREFILL_EQUAL")) == "1");
+        unset("STRATA_PF_NO_GATED");
     }
     return fails ? 1 : 0;
 }

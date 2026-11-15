@@ -2359,7 +2359,8 @@ bool launch_wmma(const float* q, const QsaAttnPools& pools, const int32_t* ids, 
             else
                 pa_launch<true, true>(grid, st, qq, pools, idq, stq, (int) s.n_head_kv, (int) s.page_size, scale_log2, nullptr, (int) cap, qfq, o16q, gate_ld);
         } else if (fast && n_q >= min_t)
-            pa_launch<false, false>(grid, st, qq, pools, idq, stq, (int) s.n_head_kv, (int) s.page_size, scale_log2, attn + q0 * s.n_head * HD, (int) cap, nullptr, nullptr, 0);
+            prompt_attn_wmma_kernel<false><<<grid, THREADS, 0, st>>>(qq, pools, idq, stq, (int) s.n_head_kv,
+                (int) s.page_size, scale_log2, attn + q0 * s.n_head * HD, (int) cap);
         else
             pa_launch<true, false>(grid, st, qq, pools, idq, stq, (int) s.n_head_kv, (int) s.page_size, scale_log2, attn + q0 * s.n_head * HD, (int) cap, nullptr, nullptr, 0);
     }

@@ -6368,7 +6368,9 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
 #endif
 #endif
 #if STRATA_EXP_LAYOUTS
-    const bool fused_gu = !nib_layout(L) && em0 == 8 && ((kExpLds16 && L.gu_type == 16) || L.gu_type == 18 || L.gu_type == 21 || L.gu_type == 22 || L.gu_type == 23) &&
+
+    // [claude] 9: mode 8's fused gate/up + SwiGLU + q8_1 with the default down kernel
+    const bool fused_gu = (em0 == 8 || em0 == 9) && ((kExpLds16 && L.gu_type == 16) || L.gu_type == 18 || L.gu_type == 21 || L.gu_type == 22 || L.gu_type == 23) &&
                           L.n_ff % 32 == 0;
     if (fused_gu && g_exp_phase != 2) {
         const dim3 gl((unsigned) (L.n_ff / 32), (unsigned) cap_groups);

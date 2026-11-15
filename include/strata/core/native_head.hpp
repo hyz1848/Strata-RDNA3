@@ -20,6 +20,12 @@ public:
     NativeHead& operator=(const NativeHead&) = delete;
 
     bool load(const std::vector<std::string>& shards, int64_t n_in, int64_t n_out, std::string& err);
+    /// Vocabulary rows [row0, row1) only (the TP head split's other card); n_out is the full vocabulary.
+    bool load_rows(const std::vector<std::string>& shards, int64_t n_in, int64_t n_out, int64_t row0, int64_t row1,
+                   std::string& err);
+    /// The rows this head holds start at this vocabulary id (load_rows), 0 otherwise; rows() of them.
+    int64_t row0() const { return row0_; }
+    int rows() const { return n_out_; }
     void unload();
     /// Moves the loaded weights from VRAM to mapped pinned host memory (a card too short for it: every logits row then reads them over PCIe).  False: not loaded, already
     /// on the host, or a repacked layout that stays in VRAM.
@@ -42,6 +48,7 @@ private:
     void* scratch_ = nullptr;
     uint64_t bytes_ = 0;
     int n_in_ = 0, n_out_ = 0;
+    int64_t row0_ = 0;
     int type_ = -1;
     int device_ = -1;
 };

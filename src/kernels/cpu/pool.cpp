@@ -32,6 +32,94 @@
 #include "pool_affinity_linux.hpp"
 #endif
 
+// Private 9950X3D2 experiment. No public ExpertPool ABI changes.
+// One live pool; fail closed on unsupported topology or concurrent pools.
+#include <fstream>
+#include <string>
+namespace cache_placement {
+struct alignas(64) Queue { std::atomic<uint64_t> head{0}; };
+struct State {
+    std::atomic<const void*> owner{nullptr};
+    std::atomic<uint64_t> phase{0}; // epoch | policy; late wakeups cannot claim new work
+    Queue queue[2];
+    int domains[9]{};
+    int tasks0=15;
+    int cores0=5;
+    bool balanced=false;
+};
+static State state;
+static int configured=[] {
+    const char* e=std::getenv("STRATA_CACHE_PLACEMENT");
+    const int v=e?std::atoi(e):0;
+    if(v<0 || v>2)std::abort();
+    return v;
+}();
+static std::atomic<int> policy{configured};
+static void setup(const void* pool,int n,bool pin,bool host,
+                  strata::kernels::cpu::CpuTopology& topo) {
+    const void* expected=nullptr;
+    if(!state.owner.compare_exchange_strong(expected,pool))std::abort();
+    const char* layout=std::getenv("STRATA_CACHE_LAYOUT");
+    state.balanced=layout && std::string(layout)=="balanced";
+    if(n!=8 || !pin || !host || topo.host_core!=0)std::abort();
+    for(int cpu:{0,8}) {
+        std::ifstream f("/sys/devices/system/cpu/cpu"+std::to_string(cpu)+"/cache/index3/shared_cpu_list");
+        std::string line;std::getline(f,line);
+        if(line!=(cpu==0?"0-7,16-23":"8-15,24-31"))std::abort();
+    }
+    if(state.balanced) {
+        const int cores[]={1,2,3,4,8,9,10,11};
+        for(int c:cores)if(std::find(topo.worker_cores.begin(),topo.worker_cores.end(),c)==topo.worker_cores.end())std::abort();
+        topo.worker_cores.assign(cores,cores+8);
+    }
+    state.cores0=1;
+    for(int i=0;i<8;++i) {
+        state.domains[i]=topo.worker_cores[i]<8?0:1;
+        state.cores0+=state.domains[i]==0;
+    }
+    state.domains[8]=0;
+    state.tasks0=3*state.cores0;
+    if(policy.load() && !state.balanced)std::abort();
+    std::fprintf(stderr,"private cache placement: policy=%d layout=%s workers=",policy.load(),state.balanced?"balanced":"original");
+    for(int i=0;i<8;++i)std::fprintf(stderr,"%s%d",i?",":"",topo.worker_cores[i]);
+    std::fprintf(stderr," host=0 row-share=%d/9; per-domain epoch queues\n",state.cores0);
+}
+static void publish(uint32_t epoch,int mode,int tasks) {
+    const int p=(mode==5 || mode==6)?policy.load(std::memory_order_relaxed):0;
+    if(p) {
+        if(tasks!=27 || !state.balanced)std::abort();
+        state.queue[0].head.store((uint64_t(epoch)<<32)|(uint64_t(state.tasks0)<<16),std::memory_order_release);
+        state.queue[1].head.store((uint64_t(epoch)<<32)|(uint64_t(27-state.tasks0)<<16),std::memory_order_release);
+    }
+    state.phase.store((uint64_t(epoch)<<32)|uint32_t(p),std::memory_order_release);
+}
+static int claim_domain(uint32_t epoch,int d) {
+    auto& a=state.queue[d].head;
+    auto h=a.load(std::memory_order_acquire);
+    for(;;) {
+        if(uint32_t(h>>32)!=epoch)return -1;
+        int i=int(h&65535),n=int((h>>16)&65535);
+        if(i>=n)return -1;
+        if(a.compare_exchange_weak(h,h+1,std::memory_order_acq_rel,std::memory_order_acquire))return i+(d?state.tasks0:0);
+    }
+}
+template<class F> static int claim(uint32_t epoch,int id,F original) {
+    const auto phase=state.phase.load(std::memory_order_acquire);
+    if(uint32_t(phase>>32)!=epoch)return -1;
+    const int p=int(uint32_t(phase));
+    if(!p)return original();
+    const int d=state.domains[id<0?8:id];
+    int i=claim_domain(epoch,d);
+    if(i<0 && p==2)i=claim_domain(epoch,1-d);
+    return i;
+}
+}
+extern "C" void strata_private_cache_policy(int p) {
+    // Replay only: caller guarantees the pool is idle; future publishes use p.
+    if(p<0 || p>2)std::abort();
+    cache_placement::policy.store(p,std::memory_order_relaxed);
+}
+
 namespace strata::kernels::cpu {
 
 namespace {
@@ -845,6 +933,8 @@ ExpertPool::ExpertPool(int n_workers, bool pin, bool host_works, PoolAffinity af
     plan_cores_ = wplan.cores;
     plan_logical_ = plan_in.logical;
     if (n_ < 1) n_ = 1;
+    if (std::getenv("STRATA_CACHE_PLACEMENT") != nullptr || std::getenv("STRATA_CACHE_LAYOUT") != nullptr)   // private experiment, opt-in only
+        cache_placement::setup(this,n_,pin,host_works_,topo_);
     scratch_.resize((size_t) n_);
     wstate_.reset(new std::atomic<int32_t>[(size_t) n_]);
     for (int i = 0; i < n_; ++i) wstate_[(size_t) i].store(kParked);
@@ -956,6 +1046,7 @@ ExpertPool::~ExpertPool() {
     // Bump the epoch so a PARKED worker notices the stop flag rather than sleeping through it.
     publish();
     for (auto& t : threads_) t.join();
+    cache_placement::state.owner.store(nullptr);
 }
 
 void ExpertPool::publish() {
