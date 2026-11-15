@@ -127,3 +127,49 @@ when `o.batch == 0` (`generate.cpp`: `tp_on = ... && o.batch == 0`), so
 
 The batch path in the fork base (0.1.49) lacks upstream 0.1.50-0.1.59 batch
 optimizations, so it is 3x slower solo. PR #15 targets exactly this.
+
+## Second pass: 0.1.59 preserved in verify.cpp (2026-11-16, evening)
+
+The first merge replaced `verify.cpp`, `prefill.cpp` and `generate.cpp` with the fork's
+copies wholesale. That was wrong: it dropped 0.1.59 code. Corrected so far:
+
+- `verify.cpp`: real 3-way merge. Kept 0.1.59's `capture()` / `capture_all()` / `pl_launch()`
+  (STRATA_SELECT_LONG two-variant graphs, STRATA_GRAPH_PRIO node priorities, launch probe,
+  `instantiate_evicting` flags, 2-D `[sel_long_][T]` tables + the fork's `long_` twins) and
+  the fork's `record_window()` (TP/DP/peer/megakernel). Header `verify.hpp` is the merged one
+  (both table sets, `ex()`/`lau()` indexing `sel_long_` and `long_`).
+  Parity: verify_parity, verify_batch_parity, spec_verify_parity, gr_parity, gdn_parity,
+  arch_defaults_test all PASS; engine decode 135-150 tok/s at 1K/6.5K.
+- `generate.cpp`: still the fork's copy, with one API fix (`AdaptGate::Tick` is
+  0.1.59's `{counter, layer}` in `verify.hpp`; the fork's copy used `{gate, layer}`).
+- `prefill.cpp`: still the fork's copy.
+
+Still to do (per-function, not hunk-level): the fork rewrote the decode loop in
+`generate.cpp` (TP/DP/peer) and the prompt loop in `prefill.cpp` (TP/DP/F16/refill) where
+0.1.59 has KVA, layer-major prefill, PLE-compact and DFlash2 wiring. Those features are all
+opt-in and unused by production, but they must be reconstructed function by function to be
+preserved. Current production behaviour is unaffected.
+
+## generate.cpp / prefill.cpp: why a hunk merge is not valid
+
+Attempted the 3-way merge of `generate.cpp` (24 conflicts) with per-hunk choices. It does
+not compile, and the failures show why:
+
+- The two versions restructured the same decode loop. Ours (0.1.59) declares state in the
+  conflicted blocks that later (auto-merged) code uses: `df2_solo`, `df2_vocab_path`,
+  `df2_deferred`, `dfr_n`/`dfr_pos`, `arm_prompt_helpers` + `paths`. Taking the fork's side
+  of those hunks leaves dangling references; taking both duplicates the loop structure.
+- APIs differ: ours' `Prefill::init(..., prefill_head_alias)` does not exist in the merged
+  `prefill.hpp` (the fork's `init(..., res_of_stage)` won), and ours' code calls
+  `Prefill::counter` / `set_spec_sampling` on `sp`, which the fork's Prefill does not have.
+- `verify.cpp` worked because its conflicts were separable: `capture()`/`pl_launch()` vs
+  `record_window()`. `generate.cpp`/`prefill.cpp` are one interleaved loop.
+
+Correct approach (what remains): reconstruct the two loops function by function, starting
+from 0.1.59's `run()`/prompt loop and porting the fork's TP/DP blocks into it (or the
+reverse), with the missing Prefill/Verifier APIs added back as needed. This is a dedicated
+task; the current tree keeps the fork's loops and 0.1.59's headers, which is consistent and
+passes the parity suite.
+
+Current tree state (commit efbbe2d5 + notes): builds clean, verify.cpp merged, production
+running on it.
