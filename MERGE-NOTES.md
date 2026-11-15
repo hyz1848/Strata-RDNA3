@@ -202,3 +202,29 @@ fork's `prefill.cpp` does not implement; they live in `src/prefill/compat_0159.c
 Verified: builds clean; verify_parity, verify_batch_parity, spec_verify_parity, gr_parity,
 gdn_parity, arch_defaults_test PASS; TP pair table applied (67 switches); 1K/6.5K decode
 134 / 150 tok/s, prefill 927 / 2,578 tok/s. Production restarted on this binary.
+
+## Concurrency (2026-11-16, solved) and the presence_penalty trap
+
+`serve/server.py` fills sampling fields the request leaves out from the model card, and for
+Qwen3.8-Flash-Next with thinking off that card adds `presence_penalty` 1.5. Two effects:
+1. a request with `penalty_last_n` cannot use the pipelined decode ("decodes serially"), and
+2. MTP acceptance drops (the fork measured 11% on code decode).
+
+Fix: set `"sampling": {..., "presence_penalty": 0}` in the config (the fork's production
+does the same). Batch solo decode went 44 -> 89 tok/s with it.
+
+Measured (DavidAU IQ3_S, 512k, same prompts):
+
+| mode | solo 1K decode | 4 concurrent aggregate |
+|---|---|---|
+| TP 2, no batch (`parallel: 1`) | 134-150 | 76 (requests queue, each full speed) |
+| layer split + batch 4, penalty 1.5 | 44 | 89 |
+| layer split + batch 4, penalty 0 | **89** | **102-115** |
+| layer split + batch 4 + `STRATA_PW_WITH_BATCH=1` | 119 (unstable: verify timed out at layer 25, empty replies) | - |
+
+Production now runs **layer split + batch 4, `parallel: 4`, `presence_penalty: 0`** (true
+parallel decoding; solo 84-89). TP remains a one-line switch back for maximum solo speed
+(134-150) with queued concurrency: add `--tensor-parallel 2` and set `"parallel": 1`.
+
+`STRATA_PW_WITH_BATCH=1` (the flag PR #15 builds on) is present in 0.1.59 but its solo
+pipeline beside batch slots is not stable in this merge: do not enable it.
