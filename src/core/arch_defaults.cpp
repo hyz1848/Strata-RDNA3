@@ -114,6 +114,7 @@ bool gfx12_prefill_share_default(const char* gcn_arch, bool defaults026) {
 
 bool gfx12_prefill_share_default(const char* gcn_arch) {
     return gfx12_prefill_share_default(gcn_arch, strata::qwen_defaults_026());
+}
 
 // [claude] 2026-11-11 (review 2, section 4): the discrete gfx1100 (RX 7900 XTX) settings that every production entry of a
 // line set identically, as defaults (a setting in the environment always wins; STRATA_GFX1100_DEFAULTS=0 turns the table off).

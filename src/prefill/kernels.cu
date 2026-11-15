@@ -3906,8 +3906,7 @@ void gdn_recurrence_variant(int variant, float* state, const float* h, const flo
     if (variant == 3) {   // diagnostics: the quad recurrence + the old norm kernel
         if (T > 0) {
             gdn_rec_quad_kernel<<<HV * (S / QCB), QTH, 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
-            if (with_out)
-                gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
+            gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
         }
         return;
     }
@@ -3917,9 +3916,8 @@ void gdn_recurrence_variant(int variant, float* state, const float* h, const flo
                 gdn_rec_quad2c_kernel<<<HV * (S / C2CB), QTH, 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
             else
                 gdn_rec_quad_pp_kernel<<<HV * (S / QCB), QTH, 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
-            if (with_out)
-                gdn_out_norm_loop_kernel<true><<<(unsigned) std::min<int64_t>(T * HV, 4096), S, 0, (cudaStream_t) stream>>>(
-                    z, gamma, eps, y, y16, T * HV, ld16);
+            gdn_out_norm_loop_kernel<true><<<(unsigned) std::min<int64_t>(T * HV, 4096), S, 0, (cudaStream_t) stream>>>(
+                z, gamma, eps, y, y16, T * HV, ld16);
         }
         check("gdn_recurrence (quad pp)");
         return;
@@ -3934,10 +3932,10 @@ void gdn_recurrence_variant(int variant, float* state, const float* h, const flo
             else
                 gdn_rec_quad_kernel<<<HV * (S / QCB), QTH, 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
             static const bool noy = [] { const char* v = std::getenv("STRATA_GDN_NOY"); return v && std::atoi(v) != 0; }();
-            if (with_out && noy)
+            if (noy)
                 gdn_out_norm_loop_kernel<false><<<(unsigned) std::min<int64_t>(T * HV, 4096), S, 0, (cudaStream_t) stream>>>(
                     z, gamma, eps, y, y16, T * HV, ld16);
-            else if (with_out)
+            else
                 gdn_out_norm_loop_kernel<true><<<(unsigned) std::min<int64_t>(T * HV, 4096), S, 0, (cudaStream_t) stream>>>(
                     z, gamma, eps, y, y16, T * HV, ld16);
         }
@@ -3973,8 +3971,7 @@ void gdn_recurrence_variant(int variant, float* state, const float* h, const flo
         if (T > T64)
             gdn_rec_cols_pipe_kernel<<<HV * NCB, dim3(CB, RG), 0, (cudaStream_t) stream>>>(
                 state, h + T64 * C, gate + T64 * HV, beta + T64 * HV, y + T64 * (size_t) HV * S, T - T64);
-        if (with_out)
-            gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
+        gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
     } else if (warp_rec) {
         // =2: the 4-accumulator chain split on the pipelined structure (FP32-level, not bit-exact);
         // =1: the sync-free bit-exact warp reduction (measured slower - kept as the bitwise control)
@@ -3983,107 +3980,30 @@ void gdn_recurrence_variant(int variant, float* state, const float* h, const flo
                                                                                                 y, T);
         else
             gdn_rec_cols_warp_kernel<<<HV * NCB, S, 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
-        if (with_out)
-            gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
+        gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
     } else
 #endif
-    if ((serial && with_out) || T <= 0 || variant == 2) {   // the fused kernel needs z/gamma: only with the output
+    if (serial || T <= 0 || variant == 2) {
         gdn_rec_kernel<<<HV, dim3(S, RG), 0, (cudaStream_t) stream>>>(state, h, gate, beta, z, gamma, eps, y, y16, T, ld16);
     } else {
         static const bool pipe = [] { const char* v = std::getenv("STRATA_GDN_PIPELINE"); return v == nullptr || std::atoi(v) != 0; }();
-        bool normed_any = false;   // the tensor-core scan wrote y16 (the norm kernel below is skipped)
 #if !defined(__HIPCC__)
         // STRATA_GDN_CHUNKED=1 (opt-in): the recurrence in chunks for prompt chunks of kGdnChunkedMin+ tokens (other
         // bits; a shorter chunk, a card it does not fit or a failed scratch allocation takes the kernels below)
         static const bool chunked = [] { const char* v = std::getenv("STRATA_GDN_CHUNKED"); return v != nullptr && std::atoi(v) != 0; }();
-        // STRATA_GDN_TC=1 (opt-in): the chunked recurrence with the scan on the tensor cores (gdn_tc.cuh) for prompt
-        // chunks of kGdnTcMin+ tokens: within 1e-4 of the kernels below (gdn_rec_parity), 3.75x gdn_rec_kh_kernel on a
-        // CMP 170HX; a shorter chunk, a card it does not fit or a failed scratch allocation takes the kernels below
-        static const bool tc = [] { const char* v = std::getenv("STRATA_GDN_TC"); return v != nullptr && std::atoi(v) != 0; }();
-        // A test's probe (gdn_probe.hpp) reads back the path that ran and may force one; without a probe this is the
-        // dispatch it was.  A forced path that cannot run launches nothing (selected = none, reason says why).
-        GdnProbe* pr = gdn_probe_get();
-        const int force = pr ? pr->force : (int) kGdnAuto;
-        int sel = kGdnNone, wanted = force;
-        bool normed = false;   // the scan wrote y16 itself
-        const char* why = "";
-        const cudaStream_t cs = (cudaStream_t) stream;
-        // the split tensor-core scan can write y16 itself (STRATA_GDN_TC_FUSE=0 off): then the norm kernel below is skipped
-        static const bool tc_fuse = [] { const char* v = std::getenv("STRATA_GDN_TC_FUSE"); return v == nullptr || std::atoi(v) != 0; }();
-        const GdnTcNorm tcn = {z, gamma, eps, y16, ld16};
-        const int tcl = gdn_tc_tiles();
-        const GdnTcNorm* tcnp = with_out && tc_fuse && tcl == 1 ? &tcn : nullptr;   // 2 tiles a head: the norm kernel (a head's norm spans both)
-        if (force != kGdnAuto) {
-            if (force == kGdnTc || force == kGdnTcSplit || force == kGdnTcS2 || force == kGdnTcS1) {
-                const bool sp = force != kGdnTc;
-                const int np = force == kGdnTcS2 ? 2 : force == kGdnTcS1 ? 1 : 3;
-                cudaError_t e = T >= kGdnTcMin ? gdn_rec_tc(state, h, gate, beta, y, T, cs, sp, np, sp ? tcnp : nullptr, sp ? tcl : 1) : cudaErrorInvalidValue;
-                if (e == cudaSuccess) { sel = force; normed = sp && tcnp != nullptr; }
-                else why = T < kGdnTcMin ? "T below the tc minimum (128)" : gdn_chunk_why(true, e, false, sp);
-            } else if (force == kGdnChunked) {
-                cudaError_t e = T >= kGdnChunkedMin ? gdn_rec_chunked(state, h, gate, beta, y, T, cs) : cudaErrorInvalidValue;
-                if (e == cudaSuccess) sel = kGdnChunked;
-                else why = T < kGdnChunkedMin ? "T below the chunked minimum (128)" : gdn_chunk_why(false, e, pr->any_sms);
-            } else if (force == kGdnKeyHead) {
-                if (gdn_keyhead_ok()) {
-                    gdn_rec_kh_kernel<<<HK * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                    sel = kGdnKeyHead;
-                } else why = "keyhead kernel not eligible here (needs sm_80+ with all 64 blocks resident, or STRATA_GDN_KEYHEAD=0 is set)";
-            } else if (force == kGdnPipe) {
-                gdn_rec_cols_pipe_kernel<<<HV * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                sel = kGdnPipe;
-            } else if (force == kGdnCols) {
-                gdn_rec_cols_kernel<<<HV * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                sel = kGdnCols;
-            } else why = "unknown path";
-        } else {
-            if (tc && T >= kGdnTcMin) {
-                wanted = kGdnTc;
-                cudaError_t e = gdn_rec_tc(state, h, gate, beta, y, T, cs);
-                if (e == cudaSuccess) sel = kGdnTc;
-                else {   // the 99-KB cards (sm_86 / 89 / 120): the single-buffered v / T / P plan
-                    if (pr) why = gdn_chunk_why(true, e, false);
-                    // STRATA_GDN_TC_NP=1|2 (experiment, not a default): fewer split passes a product on this plan, other bits
-                    static const int tc_np = [] { const char* v = std::getenv("STRATA_GDN_TC_NP"); const int x = v ? std::atoi(v) : 3; return x == 1 || x == 2 ? x : 3; }();
-                    e = gdn_rec_tc(state, h, gate, beta, y, T, cs, true, tc_np, tcnp, tcl);
-                    if (e == cudaSuccess) { sel = kGdnTcSplit; why = ""; normed = tcnp != nullptr; }
-                }
-            }
-            if (sel == kGdnNone && chunked && T >= kGdnChunkedMin) {
-                if (wanted == kGdnAuto) wanted = kGdnChunked;
-                const cudaError_t e = gdn_rec_chunked(state, h, gate, beta, y, T, cs);
-                if (e == cudaSuccess) sel = kGdnChunked;
-                else if (pr && wanted == kGdnChunked) why = gdn_chunk_why(false, e, false);
-            }
-            if (sel == kGdnNone) {
-                if (pipe && gdn_keyhead_ok()) {   // the value heads of a key head in one thread (same bits)
-                    gdn_rec_kh_kernel<<<HK * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                    sel = kGdnKeyHead;
-                } else if (pipe) {   // the software-pipelined loads (same bits)
-                    gdn_rec_cols_pipe_kernel<<<HV * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                    sel = kGdnPipe;
-                } else {
-                    gdn_rec_cols_kernel<<<HV * NCB, dim3(CB, RG), 0, cs>>>(state, h, gate, beta, y, T);
-                    sel = kGdnCols;
-                }
-                if (wanted == kGdnAuto) wanted = sel;
-            }
-        }
-        if (pr) { pr->selected = sel; pr->wanted = wanted == kGdnAuto ? sel : wanted; pr->reason = why; ++pr->calls; }
-        normed_any = normed;
-        if (sel == kGdnNone) { check("gdn_recurrence (forced path not eligible: nothing launched)"); return; }
-#else
+        if (chunked && T >= kGdnChunkedMin && gdn_rec_chunked(state, h, gate, beta, y, T, (cudaStream_t) stream) == cudaSuccess) {
+        } else if (pipe && gdn_keyhead_ok())   // the value heads of a key head in one thread (same bits)
+            gdn_rec_kh_kernel<<<HK * NCB, dim3(CB, RG), 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
+        else
+#endif
         if (pipe)   // the software-pipelined loads (same bits)
             gdn_rec_cols_pipe_kernel<<<HV * NCB, dim3(CB, RG), 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
         else
             gdn_rec_cols_kernel<<<HV * NCB, dim3(CB, RG), 0, (cudaStream_t) stream>>>(state, h, gate, beta, y, T);
-#endif
-        if (with_out && !normed_any)
-            gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
+        gdn_out_norm_kernel<<<dim3((unsigned) T, HV), S, 0, (cudaStream_t) stream>>>(z, gamma, eps, y, y16, ld16);
     }
     check("gdn_recurrence");
 }
-
 void gdn_recurrence_warm() {
 #if defined(__HIPCC__)
     // [claude] the WMMA recurrence's scratch (37 MB) and code objects at init: on first use they cost the first prompt
@@ -4112,11 +4032,8 @@ void gdn_recurrence(float* state, const float* h, const float* gate, const float
     // (AMD builds only; the arch defaults set STRATA_GDN_HEAD=1 on gfx1151 and leave other cards on the earlier kernels)
     static const bool head = [] { const char* v = std::getenv("STRATA_GDN_HEAD"); return v != nullptr && std::atoi(v) != 0; }();
     static const bool serial = std::getenv("STRATA_GDN_REC_HEADS") != nullptr;
-    gdn_recurrence_impl(head && !serial ? 1 : 0, state, h, gate, beta, z, gamma, eps, y, y16, T, stream, ld16, true);
+    gdn_recurrence_variant(head && !serial ? 1 : 0, state, h, gate, beta, z, gamma, eps, y, y16, T, stream, ld16);
 }
-/// KVA: the same recurrence, bit for bit, without the output normalisation (its readers - the output projection
-/// and the gated residual write - have no consumer when only the state advances).  `y` is still the scratch the
-/// recurrence kernels write; `z`/`gamma` are not read.
 bool gdn_conv_recurrence_fused(float* history, const float* qkv, const float* conv_w, float* hbuf, float* state, const float* gate,
                                const float* beta, const float* z, const float* gamma, float eps, float l2eps, float* y,
                                uint16_t* y16, int64_t T, void* stream, int64_t ld16) {
@@ -4128,13 +4045,7 @@ bool gdn_conv_recurrence_fused(float* history, const float* qkv, const float* co
     return false;
 #endif
 }
-void gdn_recurrence_state_only(float* state, const float* h, const float* gate, const float* beta, float* y,
-                               int64_t T, void* stream) {
-    static const bool head = [] { const char* v = std::getenv("STRATA_GDN_HEAD"); return v != nullptr && std::atoi(v) != 0; }();
-    static const bool serial = std::getenv("STRATA_GDN_REC_HEADS") != nullptr;
-    gdn_recurrence_impl(head && !serial ? 1 : 0, state, h, gate, beta, nullptr, nullptr, 0.0f, y, nullptr, T,
-                        stream, 0, /*with_out=*/false);
-}
+
 // [claude] TP prefill (kernels.hpp): the production prompt kernels on a GDN head half - STRATA_GDN_CONVL2's conv,
 // STRATA_GDN_CHUNKED's WMMA scan (STRATA_GDN_CHUNK_GDV=0) and the grid-stride out norm; false (nothing launched) where
 // this build or run takes another variant, so the caller keeps the one-card read

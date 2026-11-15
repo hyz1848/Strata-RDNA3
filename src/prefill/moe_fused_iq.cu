@@ -2912,6 +2912,7 @@ void experts_native(const WideBatch& b, const NativeGeom& g, int n_expert, int64
     if (g.d_type == T_Q2_0) launch<T_Q2_0, false>(ws, g_d, b, g, tb, ha, src, nullptr, dm, s);
     else launch<T_IQ4_NL, false>(ws, g_d, b, g, tb, ha, src, nullptr, dm, s);
     ck(cudaGetLastError(), "experts_native (NT = 256)");
+}
 
 bool f16_on() {
 #if defined(__HIPCC__)

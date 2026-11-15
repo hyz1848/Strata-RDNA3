@@ -5951,10 +5951,12 @@ int main(int argc, char** argv) {
 #endif
 #if defined(STRATA_USE_HIP)
                         const int cc_major = 0;
+                        const int cc_minor = 0;
 #else
                         const int cc_major = dp.major;
+                        const int cc_minor = dp.minor;
 #endif
-                        const int cap = o.draft_cap > 0 ? o.draft_cap : strata::core::dflash2_auto_cap(uma, cc_major);
+                        const int cap = o.draft_cap > 0 ? o.draft_cap : strata::core::dflash2_auto_cap(uma, cc_major, cc_minor, (size_t) dp.totalGlobalMem);
                         if (cap > 0 && o.spec > cap) {
                             std::fprintf(stderr, "strata generate: --draft dflash2: windows capped at %d tokens (%s; --draft-cap N changes it)\n", cap,
                                          o.draft_cap > 0 ? "as asked" : "the width measured best on this card");
@@ -16642,7 +16644,7 @@ int main(int argc, char** argv) {
                     mtp.set_draft_history(consumed.data(), (int64_t) consumed.size(), outv[(size_t) a]);
                 const bool draft_now = use_mtp && !eos && produced_n < max_new;
                 const bool drafted = !draft_now ||
-                                     mtp.draft(T, outv.data(), p, a, drafts.data(), err, dprob.data(), (float) req_spec_min_p, nullptr,
+                                     mtp.draft(T, outv.data(), p, a, drafts.data(), err, dprob.data(), (float) req_spec_min_p, nullptr, nullptr,
                                                commit_split && !tp_commit_thread ? &commit0 : nullptr);
                 if (commit_split) {
                     if (!draft_now && !tp_commit_thread) commit0();   // no draft ran: card 0's commit now

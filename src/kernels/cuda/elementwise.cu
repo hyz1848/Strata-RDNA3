@@ -452,12 +452,6 @@ void copy_from_mapped_multi(const MappedCopy* copies, int n, void* stream) {
 }
 
 
-void copy_i32_from_mapped(int32_t* dst, const int32_t* src, int64_t n, void* stream) {
-    if (n <= 0) return;
-    copy_i32_from_mapped_kernel<<<1, 128, 0, (cudaStream_t) stream>>>(dst, (const volatile int32_t*) src, (int) n);
-    check_launch("copy_i32_from_mapped");
-}
-
 void doorbell_ring(uint32_t* d_seq, void* stream) {
     if (d_seq == nullptr) return;
     doorbell_ring_kernel<<<1, 1, 0, (cudaStream_t) stream>>>(d_seq);

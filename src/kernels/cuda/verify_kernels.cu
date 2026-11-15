@@ -1531,12 +1531,11 @@ __global__ void __launch_bounds__(NT) resident_plan_kernel(const int32_t* __rest
                                      int n_expert, const uint8_t* cache_base, const unsigned long long* slot_off,
                                      long long blob, int32_t* __restrict__ pl, long long capx, uint32_t* skip,
 
-                                     uint32_t ring, volatile uint32_t* plan_err) {
+                                     uint32_t ring, volatile uint32_t* plan_err, bool partial) {
     constexpr int NW = NT / 32;
     __shared__ int32_t s_ids[NT];
     __shared__ int32_t s_excl[NT];
     __shared__ int32_t s_wsum[NW];
-                                     uint32_t ring, volatile uint32_t* plan_err, bool partial) {
     __shared__ int s_bad;
     const int tid = threadIdx.x;
     if (tid == 0) s_bad = 0;

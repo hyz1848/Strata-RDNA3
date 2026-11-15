@@ -1549,7 +1549,6 @@ bool finish_capture(cudaStream_t cs, bool ok, cudaGraphExec_t& exec, const char*
         for (auto& [k2, c] : kinds) std::fprintf(stderr, "  %4d x %.150s\n", c, k2.c_str());
     }
 #endif
-    if (ce != cudaSuccess || cudaGraphInstantiate(&exec, graph, 0) != cudaSuccess) {
     cudaGraphExec_t got = nullptr;   // (a failed instantiate leaves nothing in the member)
     const cudaError_t ie = ce != cudaSuccess ? ce : cudaGraphInstantiate(&got, graph, 0);
     if (ie != cudaSuccess) {
@@ -2113,12 +2112,13 @@ bool MtpDrafter::draft(int T, const int32_t* tokens, int64_t p, int a, int32_t* 
 }
 
 bool MtpDrafter::draft_long(int T, const int32_t* tokens, int64_t p, int a, int32_t* drafts, std::string& err,
-                            float* probs, float min_p, int* n_drafts, DraftResult* result) {
+                            float* probs, float min_p, int* n_drafts, DraftResult* result,
+                            const std::function<void()>* between) {
     if (T < 1 || T > strata::kernels::kVerifyLongT || a < 0 || a >= T) {
         err = "mtp: draft arguments out of range";
         return false;
     }
-    if (a < max_t_) return draft(std::min(T, max_t_), tokens, p, a, drafts, err, probs, min_p, n_drafts, result);
+    if (a < max_t_) return draft(std::min(T, max_t_), tokens, p, a, drafts, err, probs, min_p, n_drafts, result, between);
     // the window's rows: the bound buffer, or the rows draft() would stage from
     const float* rows = (src_R_ != nullptr && src_R_ != window_R_) ? src_R_ : window_R_;
     if (rows == nullptr) { err = "mtp: no window rows bound"; return false; }
@@ -2128,7 +2128,7 @@ bool MtpDrafter::draft_long(int T, const int32_t* tokens, int64_t p, int a, int3
     // of the same buffer: the two never overlap), after the catch-up above has read row 0 on the same stream
     const float* saved = src_R_;
     src_R_ = rows + (size_t) a * (size_t) (g_->hc * g_->n_embd);
-    const bool ok = draft(1, tokens + a, p + a, 0, drafts, err, probs, min_p, n_drafts, result);
+    const bool ok = draft(1, tokens + a, p + a, 0, drafts, err, probs, min_p, n_drafts, result, between);
     src_R_ = saved;
     return ok;
 }

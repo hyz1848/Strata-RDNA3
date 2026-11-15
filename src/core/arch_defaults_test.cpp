@@ -675,6 +675,7 @@ int main() {
         apply_arch_defaults("gfx1100", false, 1, false);
         CHECK(std::string(std::getenv("STRATA_PF_NO_GATED")) == "0" && std::string(std::getenv("STRATA_PREFILL_EQUAL")) == "1");
         unset("STRATA_PF_NO_GATED");
+        }
     }
     return fails ? 1 : 0;
 }
