@@ -228,3 +228,27 @@ parallel decoding; solo 84-89). TP remains a one-line switch back for maximum so
 
 `STRATA_PW_WITH_BATCH=1` (the flag PR #15 builds on) is present in 0.1.59 but its solo
 pipeline beside batch slots is not stable in this merge: do not enable it.
+
+## Prefill tuning and final production config (2026-11-16, night)
+
+The fork's 6,760 tok/s at 32K is on their IQ3_S (54.8G) pack with a prepacked
+`experts.bin`; ours is the DavidAU IQ3_S (84.8G) read from the GGUF shards. Measured here
+(28K prompt, 64 tokens out):
+
+| mode | 28K prefill | solo decode | 4-client aggregate |
+|---|---|---|---|
+| TP 2, `--prefill auto` (chunk 8192) | 2,959 | 134-150 | 76 (queued) |
+| TP 2, `--prefill 18432` | **4,286** | 134-150 | 76 (queued) |
+| TP 2, `--prefill 32768` | 4,176 | 134-150 | 76 |
+| batch 4, `--prefill auto` | 1,948 | 84-89 | 102-115 |
+| batch 4, `--prefill 18432` | **3,386** | 84-89 | 106-122 (median 112) |
+| batch 4, `--prefill 32768` | 3,206 | 84-89 | 110 (median) |
+| batch 8 + `--batch-mtp` | 3,085 | - | 86-120 |
+
+`--prefill 18432` is the fork's `STRATA_TP_PREFILL_CHUNK`; `auto` was picking 8192 (the
+hand-off floor), which halved the prefill. A bigger chunk (32768) is no better.
+
+Production: layer split 24, batch 4 (`"parallel": 4`), `--prefill 18432`, `presence_penalty 0`,
+`STRATA_REFILL_SDMA=0`, reserve 1024. 4-client aggregate median 112 tok/s (was 76 queued under
+TP), solo decode 84-89. TP remains the max-solo option (134-150, prefill 4,286) at the cost of
+queued concurrency.

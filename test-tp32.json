@@ -14,7 +14,7 @@
   "--expert-cache",
   "auto",
   "--prefill",
-  "18432",
+  "32768",
   "--stats",
   "--spec",
   "4",
