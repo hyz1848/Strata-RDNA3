@@ -252,3 +252,9 @@ Production: layer split 24, batch 4 (`"parallel": 4`), `--prefill 18432`, `prese
 `STRATA_REFILL_SDMA=0`, reserve 1024. 4-client aggregate median 112 tok/s (was 76 queued under
 TP), solo decode 84-89. TP remains the max-solo option (134-150, prefill 4,286) at the cost of
 queued concurrency.
+
+## Soak (2026-11-16, 7 min, production config)
+
+99 rounds of [5K prompt + 4 concurrent 96-token requests + vision request]: 0 errors,
+0 timeouts, vision correct every round. 4-client aggregate ~128 tok/s (the printed 32 is the
+mean per-request rate), 5K prefill ~6,000 tok/s on a repeated prompt (prompt cache).
