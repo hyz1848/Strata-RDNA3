@@ -17823,6 +17823,9 @@ int main(int argc, char** argv) {
                                  pl_theta, pl_force_miss, (long long) req_short_read);
                 }
             }
+            // Apply after diagnostic overrides too: BGEN admissions can read a
+            // prompt while other slots run and must never use the solo verifiers.
+            if (pw_with_batch && o.batch > 0 && (admit_slot >= 0 || batch_on())) pl_pw = 0;
             // --pipeline-windows: tokens [a, b) through the windows with the stages overlapped.  The tokens are known,
             // so every window commits whole: stage 0 queues window K, its commit and window K+1 back to back (each
             // parity's verifier keeps its own window), and stage 1 runs window K once stage 0 is done with it.  Every
@@ -17937,7 +17940,18 @@ int main(int argc, char** argv) {
             auto read_windows = [&](int64_t a, int64_t b, std::string& e) -> bool {
                 // (STRATA_LOGPOS reads every window's logits: the serial loop)
                 // the pipelined prompt read stays two-stage (three or more stages read serially; only the decode overlaps)
-                if (pipe && n_stages == 2 && pl_pw >= 1 && std::getenv("STRATA_LOGPOS") == nullptr) return read_windows_pl(a, b, e);
+                // HIP's per-group MTP prefill waits even for sync=false; with
+                // stage-0 drafting its cross-card residual copy may also wait.
+                // Either can block this host thread while another prompt
+                // verifier needs its CPU doorbells serviced. Keep this opt-in
+                // combination's prompt reads serial; GEN still pipelines.
+#if defined(STRATA_USE_HIP)
+                const bool serial_batch_solo_prompt = pw_with_batch && o.batch > 0;
+#else
+                const bool serial_batch_solo_prompt = false;
+#endif
+                if (pipe && n_stages == 2 && pl_pw >= 1 && !serial_batch_solo_prompt &&
+                    std::getenv("STRATA_LOGPOS") == nullptr) return read_windows_pl(a, b, e);
                 strata::core::progress_at("reading the prompt (verify windows), from token", a);   // #217: not "batched"
                 // every token is committed and the picks are discarded: no head sampling (see set_head_sampling)
                 struct NoHeadSampling {

@@ -1701,7 +1701,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             pending = false;
         }
         auto gr_read_group = [&](int half, bool apply, float* inj_prev, float* inj_out) {
-            FusedGrArgs fa[kFusedGrMaxT];
+            FusedGrArgs fa[kFusedGrWideT];
             for (int t = tb; t < te; ++t) {
                 FusedGrArgs& a = fa[t - tb];
                 a.R = Rt(t); a.R_out = Rt(t); a.apply = apply;
@@ -2779,7 +2779,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         // (no pending write, no inject)
         const bool mix_q8 = hd->hc_q8 != nullptr && hu->hc_q8 != nullptr && head_ != nullptr && head_->loaded();
         if (mix_q8) {
-            FusedGrArgs fa[kFusedGrMaxT];
+            FusedGrArgs fa[kFusedGrWideT];
             for (int t = 0; t < T; ++t) {
                 FusedGrArgs& a = fa[t];
                 a.R = Rt(t); a.R_out = Rt(t); a.apply = false;
@@ -2792,7 +2792,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             fused_gr_read_multi(fa, T, xn_, cs);
         }
         else if (fuse_head_gr) {
-            FusedGrArgs fa[kFusedGrMaxT];
+            FusedGrArgs fa[kFusedGrWideT];
             for (int t = 0; t < T; ++t) {
                 FusedGrArgs& a = fa[t];
                 a.R = Rt(t); a.R_out = Rt(t); a.apply = true;
@@ -2815,7 +2815,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 err = "verify: the output_hc_* weights have the wrong engine forms";
                 return false;
             }
-            FusedGrArgs fa[kFusedGrMaxT];
+            FusedGrArgs fa[kFusedGrWideT];
             for (int t = 0; t < T; ++t) {
                 fa[t].R = Rt(t); fa[t].R_out = Rt(t); fa[t].apply = false;
                 fa[t].w_norm = (const float*) hn->data; fa[t].w_down = (const uint16_t*) hd->data;
