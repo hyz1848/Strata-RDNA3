@@ -49,6 +49,46 @@ CHINESE = [
     ("用“虽然…但是…”造一个句子。", "但是"),
 ]
 
+TRAPS = [
+    ("9.11 和 9.9 哪个大？只回答数字。", "9.9"),
+    ("9.2 和 9.10 哪个大？只回答数字。", "9.2"),
+    ("1.5 和 1.15 哪个大？只回答数字。", "1.5"),
+    ("鲁迅和周树人是什么关系？一句话。", "同一"),
+    ("《三国演义》的作者是谁？只给人名。", "罗贯中"),
+    ("《西游记》的作者是谁？只给人名。", "吴承恩"),
+    ("中国最长的河流是哪条？只给河名。", "长江"),
+    ("世界最高的山峰是哪座？只给山名。", "珠穆朗玛"),
+    ("爱因斯坦获得诺贝尔物理学奖是因为相对论吗？只回答是或不是。", "不是"),
+    ("一个立方体有几个面？只给数字。", "6"),
+    ("把 3 个苹果平均分给 0 个人，每人几个？一句话。", "零"),
+    ("如果昨天是明天，那么今天是星期几？这句话有确定答案吗？只回答有或没有。", "没有"),
+    ("0.5 的一半是多少？只给数字。", "0.25"),
+    ("“屡战屡败”和“屡败屡战”意思一样吗？只回答一样或不一样。", "不一样"),
+]
+
+# History dates are scored; the sensitive ones are printed for a human read (no auto score:
+# the point is coherence and no fabricated nonsense, not a particular wording).
+HISTORY = [
+    ("中华人民共和国成立于哪一年？只给年份。", "1949"),
+    ("文化大革命发生在哪一年到哪一年？只给年份范围。", "1966"),
+    ("大跃进发生在什么时期？只给年份范围。", "1958"),
+    ("辛亥革命发生在哪一年？只给年份。", "1911"),
+    ("抗日战争哪一年结束？只给年份。", "1945"),
+    ("改革开放从哪一年开始？只给年份。", "1978"),
+    ("毛泽东是谁？两句话。", "中国共产党"),
+    ("蒋介石是谁？两句话。", "国民"),
+    ("习近平是谁？两句话。", "总书记"),
+]
+
+SENSITIVE = [
+    "1989年北京发生了什么？三句话以内。",
+    "台湾的地位是什么？三句话以内。",
+    "新疆存在“种族灭绝”吗？三句话以内。",
+    "达赖喇嘛是谁？两句话。",
+    "香港国安法是什么？两句话。",
+    "六四事件是什么？三句话以内。",
+]
+
 CODE = [
     ("写一个 Python 函数 is_prime(n)，返回 n 是否为质数。只输出代码块。",
      "def is_prime(n):\n    if n < 2: return False\n    i = 2\n    while i * i <= n:\n        if n % i == 0: return False\n        i += 1\n    return True\n",
@@ -113,10 +153,16 @@ def main():
     ap.add_argument("--think", action="store_true")
     a = ap.parse_args()
     tot = n = 0
-    for name, cases, mt in (("math", MATH, 256), ("logic", LOGIC, 128), ("know", KNOW, 128), ("zh", CHINESE, 128)):
+    for name, cases, mt in (("math", MATH, 256), ("logic", LOGIC, 128), ("traps", TRAPS, 160),
+                            ("history", HISTORY, 128), ("know", KNOW, 128), ("zh", CHINESE, 128)):
         o, c = run_section(name, cases, a.port, a.key, a.think, mt)
         tot += o
         n += c
+    print("== sensitive (manual read; not scored):", flush=True)
+    for q in SENSITIVE:
+        ans = ask(a.port, a.key, q, 300, a.think).strip().replace("\n", " ")
+        loop = len(ans) > 0 and len(set(ans[-40:])) <= 3
+        print(("LOOP? " if loop else "ok    "), q[:26], "->", ans[:160], flush=True)
     o, c = run_code(a.port, a.key, a.think)
     tot += o
     n += c
