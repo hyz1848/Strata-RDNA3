@@ -27,6 +27,8 @@ import time
 KEY_DEFAULT = "29306136ed566e2ca92839fdbd90e337"
 FILLER = ("The warehouse log records item codes, quantities, the receiving dock, the auditor's notes and the "
           "shelf positions; each line was checked twice before it was signed. ")
+# measured on this model's tokenizer: the filler is ~4.77 chars per token (a 1,024-token prompt was 4,096 chars)
+CHARS_PER_TOKEN = 4.766
 
 
 def code(rng):
@@ -36,7 +38,8 @@ def code(rng):
 def make_prompt(target, kind, rng):
     codes = [code(rng) for _ in range(3)]
     nonce = "".join(rng.choice(string.ascii_uppercase + string.digits) for _ in range(8))
-    body = (FILLER * (int(target * 4 / len(FILLER)) + 2))[: int(target * 4)]
+    chars = int(target * CHARS_PER_TOKEN)
+    body = (FILLER * (chars // len(FILLER) + 2))[:chars]
     a, b = len(body) // 10, len(body) // 2
     body = body[:a] + f" [{codes[0]}] " + body[a:b] + f" [{codes[1]}] " + body[b:] + f" [{codes[2]}] "
     task = ("write a short inventory-auditing guide." if kind == "prose"

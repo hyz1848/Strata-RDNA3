@@ -86,3 +86,19 @@ python3 tools/bench.py --port 1234 --mode single \
 python3 tools/bench.py --port 1234 --mode concurrent --concurrency 4 \
   --lengths 1024,4096,16384,32768,65536 --out bench_concurrent.json
 ```
+
+## Controlled comparison with the fork's own engine (2026-11-16)
+
+Ran the fork's own `rdna3/bench.py` with the fork's own engine (`build-hip/strata`) and the
+**same stock IQ3_S model + pack** on this machine, 32K prompt, 2 repeats:
+
+```
+n32768  prefill 5524  (reference 6760, ratio 0.82)
+        decode  126.2 (reference 129.8, ratio 0.97)
+```
+
+So the fork's published 6,760 is not reproducible on this machine with its own engine: prefill
+is 18% lower while decode matches. Our merged engine does 5,314-5,336 at 30.4K tokens
+(~5,400 at 32K), i.e. within 1-2% of the fork's engine here. The remaining prefill difference
+is the machine (9950X3D2 + ROCm 7.10 in the reference vs 9900X + ROCm 10.3 here; prefill is
+CPU-heavy, decode is GPU-bound).
