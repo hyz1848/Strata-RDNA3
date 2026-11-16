@@ -258,3 +258,24 @@ queued concurrency.
 99 rounds of [5K prompt + 4 concurrent 96-token requests + vision request]: 0 errors,
 0 timeouts, vision correct every round. 4-client aggregate ~128 tok/s (the printed 32 is the
 mean per-request rate), 5K prefill ~6,000 tok/s on a repeated prompt (prompt cache).
+
+## experts.bin test (2026-11-16): no gain with 121 GB RAM
+
+Built the prepacked arena for the DavidAU pack into a copy
+(`/opt/Strata-data/packs/davidau-iq3s-eb`, `iq_pack.py --compat-bf16 --experts-bin`):
+46.84 GiB, 48 layers; dense.bin / index.txt / native_experts.txt are byte-identical to the
+original pack (sha256), so only the arena was added.
+
+Measured with it (same config as production):
+
+| | GGUF shards (current) | + experts.bin |
+|---|---|---|
+| 5K prefill | 1,783 | 1,060 (first request after the arena load) |
+| 28K prefill | 3,386 | 3,389 |
+| 1 client | 61.7 | 63.8 |
+| 4 clients | 111.9 | 106.9 |
+
+No gain: with 121 GB RAM the GGUF pages already stay in the page cache, so the O_DIRECT arena
+buys nothing (the fork's 1.9 vs 1.0 GiB/s applies when the model does not fit in RAM).
+Production stays on the original pack; the -eb copy can be deleted (`rm -rf
+/opt/Strata-data/packs/davidau-iq3s-eb`, ~48 GiB).
