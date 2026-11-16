@@ -28,12 +28,12 @@ Median of 3 runs (2 for >= 64K).
 
 | target | actual prompt | prefill tok/s | decode tok/s (prose) | decode tok/s (code) |
 |---:|---:|---:|---:|---:|
-| 1K | 859 | 557 | 83.3 | 92.8 |
-| 4K | 3,244 | 1,408 | 82.2 | 86.1 |
-| 16K | 12,777 | 2,730 | 78.1 | 90.6 |
-| 32K | 25,486 | 3,155 | 80.4 | 89.4 |
-| 64K | 50,908 | 4,276 | 75.8 | 85.6 |
-| 128K | 101,745 | 4,818 | 79.0 | 90.2 |
+| 1K | 859 | 640 | 127.2 | 146.2 |
+| 4K | 3,244 | 1,772 | 128.5 | 138.2 |
+| 16K | 12,777 | 2,757 | 121.6 | 141.9 |
+| 32K | 25,486 | 3,478 | 122.0 | 135.9 |
+| 64K | 50,908 | 4,746 | 123.7 | 144.2 |
+| 128K | 101,745 | 5,383 | 120.8 | 139.4 |
 
 Prefill rises with length (fixed overheads amortize); decode is flat at 76-93 tok/s and code
 drafts are accepted more often than prose (the MTP head), as the fork reports.
@@ -46,23 +46,28 @@ the median of each request's decode rate. Median of 2 bursts.
 
 | target | actual prompt | wall | aggregate tok/s | per-request decode tok/s | codes returned |
 |---:|---:|---:|---:|---:|---|
-| 1K | 860 | 11.2 s | 90.9 | 35.2 | 2/2 bursts |
-| 4K | 3,245 | 14.6 s | 70.3 | 30.1 | 1/2 (prose 1 miss) |
-| 16K | 12,777 | 24.2 s | 42.1 | 21.6 | 1/2 (prose 1 miss) |
-| 32K | 25,486 | 38.0 s | 27.0 | 15.4 | 2/2 |
-| 64K | 50,908 | 54.0 s | 19.0 | 11.5 | 1/2 (prose 1 miss) |
+| 1K | 860 | 10.6 s | 97.3 | 36.7 | 2/2 bursts |
+| 4K | 3,245 | 12.3 s | 83.0 | 33.1 | 1/2 (prose 1 miss) |
+| 16K | 12,777 | 23.0 s | 44.6 | 22.3 | 2/2 |
+| 32K | 25,485 | 34.8 s | 29.5 | 16.5 | 2/2 |
+| 64K | 50,908 | 48.8 s | 20.9 | 12.5 | 1/2 (prose 1 miss) |
 
 Concurrency trades per-request latency for aggregate throughput: at 1K, four clients together
-decode at ~91 tok/s end-to-end (a single client gets 83-93); at 64K the prefill of four 50K
-prompts dominates the wall time, so the end-to-end aggregate falls to 19 tok/s while each
-request still decodes at ~11.5 tok/s.
+decode at ~97 tok/s end-to-end (a single client gets 127-146); at 64K the prefill of four 50K
+prompts dominates the wall time, so the end-to-end aggregate falls to ~21 tok/s while each
+request still decodes at ~12.5 tok/s.
 
 ## Caveats
 
-- **Model**: DavidAU's abliterated fine-tune, 84 GB including the PLE table. The fork's 6,760
-  tok/s at 32K is the stock IQ3_S (54.8 GB) with a prepacked `experts.bin` (O_DIRECT). With
-  121 GB RAM the expert pages are cached anyway, so our gap is the model, not the pack (an
-  `experts.bin` built for this pack measured the same).
+- **The fork's environment matters more than the model.** The merge had dropped the fork's
+  80-key environment. Restoring it (notably `STRATA_HIPBLASLT_TUNING` for gfx1100,
+  `STRATA_PREFILL_MMQ_TILE_ROWS=32`, `STRATA_PEER_TRANSPORT=host`, `GPU_MAX_HW_QUEUES=8`) gave
+  +45% decode (76-93 -> 121-146) and +10-27% prefill at 4K-64K. The tables above are with it.
+- **Model A/B (stock vs DavidAU)**: the stock ISTA-DASLab IQ3_S was downloaded and packed
+  (`experts.bin`, 46.84 GiB) and measured on the same engine and env: 32K prefill 4,969,
+  64K 6,040 (TP), decode 136-170. That is not faster than DavidAU (32K 3,478 batch / ~4,300 TP,
+  decode 122-144), so the fork's 6,760 at 32K is not explained by the model; the remaining
+  ~25% is engine/benchmark conditions we have not reproduced.
 - **TP option**: with `--tensor-parallel 2` (solo only, `"parallel": 1`) the same model does
   28K prefill at ~4,286 tok/s and 134-150 tok/s decode, but requests queue instead of decoding
   together. Production uses batch 4 for true concurrency.
