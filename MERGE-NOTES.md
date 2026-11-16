@@ -279,3 +279,19 @@ No gain: with 121 GB RAM the GGUF pages already stay in the page cache, so the O
 buys nothing (the fork's 1.9 vs 1.0 GiB/s applies when the model does not fit in RAM).
 Production stays on the original pack; the -eb copy can be deleted (`rm -rf
 /opt/Strata-data/packs/davidau-iq3s-eb`, ~48 GiB).
+
+## PLE I/O mode (2026-11-16): no gain either
+
+`--ple-io direct` vs `--ple-io mmap` (the table in the page cache, 121 GB RAM):
+5K prefill 1,783 vs 1,789, 28K 3,386 vs 3,401, 1 client 61.7 vs 64.1, 4 clients 111.9 vs 112.2.
+The PLE reads are not the bottleneck (rows are cached by ple-row-cache anyway). Keep `direct`.
+
+The one remaining free win is locking the PLE table (fork: up to 6% decode). The user manager's
+hard RLIMIT_MEMLOCK is 8 MiB, so a user-unit drop-in cannot raise it. Needs root once:
+
+  sudo mkdir -p /etc/systemd/system/user@.service.d
+  printf '[Service]\nLimitMEMLOCK=infinity\n' | sudo tee /etc/systemd/system/user@.service.d/memlock.conf
+  sudo systemctl daemon-reload
+  # then log out/in (or: sudo systemctl restart user@$(id -u))
+
+After that the engine log should say the PLE table was locked instead of the RLIMIT warning.
