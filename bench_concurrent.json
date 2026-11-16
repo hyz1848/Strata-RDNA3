@@ -1,0 +1,116 @@
+{
+ "mode": "concurrent",
+ "concurrency": 4,
+ "rows": [
+  {
+   "target": 1024,
+   "kind": "prose",
+   "prompt": 860.25,
+   "wall": 11.278396368026733,
+   "prefill_aggregate": 546.6811899476362,
+   "aggregate": 90.83919080695809,
+   "per_request": 35.33948395286774,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 1024,
+   "kind": "code",
+   "prompt": 860.25,
+   "wall": 11.234894633293152,
+   "prefill_aggregate": 556.5680520687372,
+   "aggregate": 91.1447743751672,
+   "per_request": 35.09977316848083,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 4096,
+   "kind": "prose",
+   "prompt": 3243.75,
+   "wall": 14.497785568237305,
+   "prefill_aggregate": 1378.280498313572,
+   "aggregate": 70.42516373652825,
+   "per_request": 30.165141588895715,
+   "ok": false,
+   "rounds": 2
+  },
+  {
+   "target": 4096,
+   "kind": "code",
+   "prompt": 3245.5,
+   "wall": 14.579070091247559,
+   "prefill_aggregate": 1373.0062409501031,
+   "aggregate": 70.23791241365325,
+   "per_request": 29.96899941974405,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 16384,
+   "kind": "prose",
+   "prompt": 12777.0,
+   "wall": 24.20201289653778,
+   "prefill_aggregate": 2682.332187402809,
+   "aggregate": 41.93921101959984,
+   "per_request": 21.572143298958146,
+   "ok": false,
+   "rounds": 2
+  },
+  {
+   "target": 16384,
+   "kind": "code",
+   "prompt": 12778.0,
+   "wall": 24.231919407844543,
+   "prefill_aggregate": 2685.080902869877,
+   "aggregate": 42.258390370792284,
+   "per_request": 21.502629421403206,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 32768,
+   "kind": "prose",
+   "prompt": 25485.25,
+   "wall": 37.89766538143158,
+   "prefill_aggregate": 3119.0862382052755,
+   "aggregate": 27.020152659604932,
+   "per_request": 15.449451584089859,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 32768,
+   "kind": "code",
+   "prompt": 25486.25,
+   "wall": 37.961400389671326,
+   "prefill_aggregate": 3113.09505730195,
+   "aggregate": 26.974833473396366,
+   "per_request": 15.436299695992314,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 65536,
+   "kind": "prose",
+   "prompt": 50907.75,
+   "wall": 54.03488051891327,
+   "prefill_aggregate": 4192.7094681451545,
+   "aggregate": 18.950722815916073,
+   "per_request": 11.517512815738865,
+   "ok": true,
+   "rounds": 2
+  },
+  {
+   "target": 65536,
+   "kind": "code",
+   "prompt": 50909.0,
+   "wall": 53.87859070301056,
+   "prefill_aggregate": 4209.003523533682,
+   "aggregate": 19.005783091179676,
+   "per_request": 11.556355050623495,
+   "ok": true,
+   "rounds": 2
+  }
+ ]
+}

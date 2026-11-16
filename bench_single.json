@@ -1,0 +1,113 @@
+{
+ "mode": "single",
+ "rows": [
+  {
+   "target": 1024,
+   "kind": "prose",
+   "prompt": 859,
+   "prefill": 557.2083211555251,
+   "decode": 83.34346501717056,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 1024,
+   "kind": "code",
+   "prompt": 860,
+   "prefill": 554.7857329179402,
+   "decode": 92.81398456726915,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 4096,
+   "kind": "prose",
+   "prompt": 3244,
+   "prefill": 1408.3417666228213,
+   "decode": 82.24707322624899,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 4096,
+   "kind": "code",
+   "prompt": 3245,
+   "prefill": 1405.7485476720717,
+   "decode": 86.08124630126648,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 16384,
+   "kind": "prose",
+   "prompt": 12777,
+   "prefill": 2730.3638865879193,
+   "decode": 78.06412491339975,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 16384,
+   "kind": "code",
+   "prompt": 12778,
+   "prefill": 2732.5670952669725,
+   "decode": 90.58399562438184,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 32768,
+   "kind": "prose",
+   "prompt": 25486,
+   "prefill": 3155.479567176564,
+   "decode": 80.4483727547947,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 32768,
+   "kind": "code",
+   "prompt": 25488,
+   "prefill": 3145.0422430843555,
+   "decode": 89.35786506433982,
+   "ok": true,
+   "reps": 3
+  },
+  {
+   "target": 65536,
+   "kind": "prose",
+   "prompt": 50907.5,
+   "prefill": 4276.332357144651,
+   "decode": 75.8011318087295,
+   "ok": true,
+   "reps": 2
+  },
+  {
+   "target": 65536,
+   "kind": "code",
+   "prompt": 50911.5,
+   "prefill": 4244.919717477156,
+   "decode": 85.6236885860597,
+   "ok": true,
+   "reps": 2
+  },
+  {
+   "target": 131072,
+   "kind": "prose",
+   "prompt": 101745.0,
+   "prefill": 4817.7936728815275,
+   "decode": 78.99938685101357,
+   "ok": true,
+   "reps": 2
+  },
+  {
+   "target": 131072,
+   "kind": "code",
+   "prompt": 101748.0,
+   "prefill": 4805.987934289598,
+   "decode": 90.17508903514906,
+   "ok": true,
+   "reps": 2
+  }
+ ]
+}
