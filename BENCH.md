@@ -35,7 +35,7 @@ Median of 3 runs (2 for >= 64K).
 | 64K | 50,908 | 4,746 | 123.7 | 144.2 |
 | 128K | 101,745 | 5,383 | 120.8 | 139.4 |
 
-Prefill rises with length (fixed overheads amortize); decode is flat at 76-93 tok/s and code
+Prefill rises with length (fixed overheads amortize); decode is flat at 121-146 tok/s and code
 drafts are accepted more often than prose (the MTP head), as the fork reports.
 
 ## 2. Four concurrent requests
