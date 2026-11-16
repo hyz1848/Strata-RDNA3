@@ -295,3 +295,12 @@ hard RLIMIT_MEMLOCK is 8 MiB, so a user-unit drop-in cannot raise it. Needs root
   # then log out/in (or: sudo systemctl restart user@$(id -u))
 
 After that the engine log should say the PLE table was locked instead of the RLIMIT warning.
+
+## PLE locked in RAM (2026-11-16, LimitMEMLOCK=infinity applied): no gain
+
+After the user manager got `LimitMEMLOCK=infinity` (system drop-in on user@.service), an
+explicit `--ple-io ram` locks the 26.8 GiB table: "PLE table locked in RAM (--ple-io ram) in 8.3 s".
+
+Measured: 5K prefill 1,542 (direct 1,783), 28K 3,364 (3,386), 1 client 62.8 (61.7),
+4 clients 112.2 (111.9). No gain: the table was already resident in the page cache, and locking
+it only takes RAM away from the GGUF pages. Production keeps `--ple-io direct`.
