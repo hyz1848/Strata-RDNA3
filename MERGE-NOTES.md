@@ -304,3 +304,23 @@ explicit `--ple-io ram` locks the 26.8 GiB table: "PLE table locked in RAM (--pl
 Measured: 5K prefill 1,542 (direct 1,783), 28K 3,364 (3,386), 1 client 62.8 (61.7),
 4 clients 112.2 (111.9). No gain: the table was already resident in the page cache, and locking
 it only takes RAM away from the GGUF pages. Production keeps `--ple-io direct`.
+
+## Fork host-memory-lock merge (9 commits, 2026-11-16): reverted, cold prefill 2x slower
+
+Merged origin/main (9 commits: mlock of every GPU-mapped host block via hip_compat host_alloc,
+host_lock_report sweep at READY + a 10 s background sweep, MADV_DONTDUMP on the arena/pinned
+blocks/parked conversations, RLIMIT_CORE=8 GiB, and "a host-side prompt read failure fails only
+that request"). Build green, parity suite PASS.
+
+Measured on the same cold-start protocol (fresh engine, 5K then 28K prompt):
+
+| build | cold 5K prefill | cold 28K prefill | 4 clients |
+|---|---|---|---|
+| 454208bc (no host lock) | 1,791 | 3,407 | 112 |
+| + host-lock merge | 865 | 2,082 | 97 |
+
+Cold prefill halves. Most likely the mlock sweep / mlock of the GPU-mapped staging blocks (the
+routed-stream staging is `r_coherent_alloc`, now locked) competing with the expert page cache, or
+the READY sweep walking /proc/self/maps while the first request runs. Reverted with
+`git reset --hard 454208bc`; the merge commit is `69461f71` if it is revisited. Production runs
+454208bc (the stall this fixes has not been observed here; the 7-minute soak was clean).
