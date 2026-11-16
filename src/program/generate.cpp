@@ -7198,7 +7198,10 @@ int main(int argc, char** argv) {
         const char* ev = std::getenv("STRATA_DP_PREFILL");
         const char* kd = std::getenv("STRATA_KV_HOST_DMA");
         const bool asked = ev != nullptr && ev[0] == '1';
-        bool ok = asked && multi_gpu && stages.size() == 1 && o.batch == 0 && o.peer_device < 0 && !stage_trim &&
+        // A lone GEN request under STRATA_PW_WITH_BATCH reads its prompt on the main
+        // session, so the DP path can serve it beside idle batch slots; BGEN reads
+        // go to the slot's own session and do not use it.
+        bool ok = asked && multi_gpu && stages.size() == 1 && (o.batch == 0 || pw_with_batch) && o.peer_device < 0 && !stage_trim &&
                   kd != nullptr && kd[0] == '1' && g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1 &&
                   stages[0]->ss.qsa_states[stages[0]->ss.qsa_primary()].kv_mode == 1;
         if (asked && !ok)
@@ -17946,7 +17949,9 @@ int main(int argc, char** argv) {
                 // verifier needs its CPU doorbells serviced. Keep this opt-in
                 // combination's prompt reads serial; GEN still pipelines.
 #if defined(STRATA_USE_HIP)
-                const bool serial_batch_solo_prompt = pw_with_batch && o.batch > 0;
+                // Only a batch read (admitted, or beside active slots) needs the serial
+                // path: a lone GEN request has no other verifier to service doorbells.
+                const bool serial_batch_solo_prompt = pw_with_batch && o.batch > 0 && (batch_on() || admit_slot >= 0);
 #else
                 const bool serial_batch_solo_prompt = false;
 #endif
