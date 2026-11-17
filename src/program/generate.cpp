@@ -7201,7 +7201,10 @@ int main(int argc, char** argv) {
         // A lone GEN request under STRATA_PW_WITH_BATCH reads its prompt on the main
         // session, so the DP path can serve it beside idle batch slots; BGEN reads
         // go to the slot's own session and do not use it.
-        bool ok = asked && multi_gpu && stages.size() == 1 && (o.batch == 0 || pw_with_batch) && o.peer_device < 0 && !stage_trim &&
+        // A lone GEN request reads its prompt on the main session, so the DP path
+        // can serve it beside idle batch slots; BGEN reads go to the slot's own
+        // session and do not use it. Independent of the decode pipeline opt-in.
+        bool ok = asked && multi_gpu && stages.size() == 1 && o.peer_device < 0 && !stage_trim &&
                   kd != nullptr && kd[0] == '1' && g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1 &&
                   stages[0]->ss.qsa_states[stages[0]->ss.qsa_primary()].kv_mode == 1;
         if (asked && !ok)

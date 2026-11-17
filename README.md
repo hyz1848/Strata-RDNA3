@@ -17,7 +17,7 @@ and four concurrent request slots on two RX 7900 XTX cards.
    fork that trails the engine. The tree builds, passes the engine's parity tests, and serves.
 
 2. **Concurrency that pays.** Four batch slots plus the solo path for a lone request. A single
-   request keeps MTP and decodes at 130-165 tok/s. Four concurrent requests decode at about
+   request keeps MTP and decodes at 119-146 tok/s. Four concurrent requests decode at about
    **200 tok/s aggregate**, flat from 4K to 64K prompts, while each request still runs at
    12-33 tok/s. A request that arrives while another is running joins a batch slot instead of
    queueing behind it.
@@ -91,12 +91,10 @@ GPU_MAX_HW_QUEUES=8
 STRATA_REFILL_SDMA=0
 HSA_USERPTR_FOR_PAGED_MEM=0
 HSA_SVM_FOR_PAGED_MEM=0
-STRATA_PW_WITH_BATCH=1
 STRATA_DP_PREFILL=1
 STRATA_DP_EARLY_REFILL=0
 ```
 
-`STRATA_PW_WITH_BATCH=1` keeps the decode pipeline for a lone request beside the batch slots.
 `STRATA_DP_PREFILL=1` enables the two-card prompt path; the merge lets it run beside idle slots.
 The HSA variables stop the kernel from reclaiming GPU-mapped expert memory (queue stalls and the
 60 s watchdog on ROCm 10.2+).
@@ -118,16 +116,15 @@ A lone request uses the solo path with MTP and the decode pipeline. Median of 3 
 
 | target | actual prompt | prefill tok/s | decode tok/s (prose) | decode tok/s (code) |
 |---:|---:|---:|---:|---:|
-| 4K | 3,852 | 1,946 | 141.1 | 157.4 |
-| 8K | 7,638 | 2,544 | 137.7 | 157.7 |
-| 16K | 15,210 | 3,551 | 130.7 | 164.8 |
-| 32K | 30,356 | 5,170 | 131.3 | 153.3 |
-| 64K | 60,642 | 5,460 | 133.8 | 150.6 |
-| 128K | 121,218 | 5,470 | 126.8 | 139.2 |
-| 256K | 242,368 | 5,445 | 120.8 | 147.7 |
+| 4K | 3,852 | 2,020 | 126.1 | 145.9 |
+| 8K | 7,638 | 2,588 | 124.2 | 143.3 |
+| 16K | 15,210 | 3,609 | 124.0 | 145.2 |
+| 32K | 30,356 | 5,425 | 119.2 | 140.7 |
+| 64K | 60,642 | 5,704 | 122.9 | 136.5 |
+| 128K | 121,218 | 5,700 | 118.3 | 139.6 |
 
-Prefill rises with prompt length as fixed costs amortize, then flattens at about 5,450 tok/s
-from 64K up. Decode is flat at 120-165 tok/s.
+Prefill rises with prompt length as fixed costs amortize, then flattens at about 5,700 tok/s
+from 32K up. Decode is flat at 118-146 tok/s.
 
 ### Four concurrent requests
 
@@ -138,14 +135,14 @@ engine's own `tok_s` summed over the four slots during the decode phase (the con
 
 | target | actual prompt | wall | aggregate decode tok/s | aggregate end-to-end tok/s | per-request decode tok/s |
 |---:|---:|---:|---:|---:|---:|
-| 4K | 3,853 | 13.0 s | **204.8** | 79.0 | 32.5 |
-| 8K | 7,640 | 17.2 s | **199.0** | 59.5 | 27.4 |
-| 16K | 15,212 | 22.6 s | **201.4** | 45.0 | 22.6 |
-| 32K | 30,358 | 29.0 s | **200.4** | 35.3 | 18.8 |
-| 64K | 60,644 | 51.0 s | **198.1** | 20.1 | 12.1 |
+| 4K | 3,853 | 12.9 s | **204.3** | 79.5 | 32.4 |
+| 8K | 7,639 | 17.0 s | **206.5** | 60.3 | 27.5 |
+| 16K | 15,211 | 22.3 s | **202.6** | 45.9 | 23.0 |
+| 32K | 30,357 | 28.1 s | **201.2** | 36.4 | 19.3 |
+| 64K | 60,643 | 49.4 s | **197.2** | 20.8 | 12.4 |
 
 The aggregate decode throughput is about **200 tok/s at every length**: four slots decode
-together at 1.4-1.5x a single stream (130-165 tok/s), and the sum does not fall as the context
+together at 1.4-1.7x a single stream (119-146 tok/s), and the sum does not fall as the context
 grows. End-to-end throughput is lower only because the four prompt reads share the cards; that is
 the prefill, not the decode. Per-request latency falls as the four slots share the two cards.
 
