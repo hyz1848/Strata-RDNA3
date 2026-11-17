@@ -27,8 +27,6 @@ int main() {
                 ++cases;
             }
     assert(strata::core::serve_stop_bound(4, 0, static_cast<const int*>(nullptr), [](int) { return false; }) == 0);
-<<<<<<< HEAD
-=======
     // GEN hold=N:ID: against the emission loop with the hold (stop after N emitted tokens unless ID came first; EOS and
     // max_new as before), for every window shape, start, hold, max_new and place of ID / EOS in the window
     int hold_cases = 0;
@@ -71,6 +69,5 @@ int main() {
     assert(strata::core::serve_stop_bound_on("1"));
     assert(strata::core::serve_stop_bound_on(""));
     assert(!strata::core::serve_stop_bound_on("0"));
->>>>>>> be101072b (serve: the thinking budget's hold (GEN hold=N:ID), so the wrap-up pass continues from the live session)
     std::cout << "SUMMARY stop_bound cases=" << cases << " passed\n";
 }
