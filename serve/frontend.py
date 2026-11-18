@@ -163,8 +163,11 @@ def effort_kwargs(value) -> dict:
         return {"reasoning_effort": value}
     key = str(value).strip().lower()
     if key not in EFFORT:
-        raise ValueError(f"unknown reasoning effort {value!r}: use none, low, medium or high"
-                         + (", max or 1..100" if _NUMERIC_EFFORT else ""))
+        # A client's own preset name (xhyper, xsocrates, ...): it is a label the
+        # template may use; the client's system prompt carries the instruction,
+        # so no server-side mapping and no effort turn (server.py adds none for
+        # a name outside its EFFORT_TEXT).
+        return {"reasoning_effort": str(value).strip()}
     level = EFFORT[key]
     return {"enable_thinking": False} if level is None else {"reasoning_effort": level}
 

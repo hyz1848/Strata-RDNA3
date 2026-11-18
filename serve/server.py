@@ -5840,7 +5840,10 @@ class Service:
         empty thinking block).  The engine (--tail-role-token) checkpoints in front of that turn."""
         effort = kwargs.get("reasoning_effort")
         off = kwargs.get("enable_thinking") is False
-        if not self.effort_end or (not off and effort in (None, "", "xhigh", "high")):
+        # An unknown level (the client's own preset) is only a label: its system prompt
+        # carries the instruction, so no effort turn of the server's is added.
+        if not self.effort_end or (not off and effort in (None, "", "xhigh", "high")) or \
+                (effort is not None and effort != "" and effort not in EFFORT_TEXT):
             return self.template.render(messages, tools=tools, **kwargs)
         base = {k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "enable_thinking")}
         history = self.template.render(messages, tools=tools, add_generation_prompt=False, **base)
@@ -9343,8 +9346,11 @@ def clean_shared_defaults(d) -> dict:
             continue
         number = isinstance(value, (int, float)) and not isinstance(value, bool)
         if key == "reasoning_effort":
-            if value not in ("none", "low", "medium", "high"):
-                raise ValueError("reasoning_effort: none, low, medium or high")
+            # The level is a label for the app's presets (none/low/medium/high and the
+            # client's own names, e.g. xhyper/xsocrates: each injects its own system
+            # prompt).  A short string is accepted; an unknown one adds no effort turn.
+            if not isinstance(value, str) or not value.strip() or len(value) > 64:
+                raise ValueError("reasoning_effort: a short level name")
         elif key == "temperature":
             if not number or not 0 <= value <= 2:
                 raise ValueError("temperature: 0..2")
