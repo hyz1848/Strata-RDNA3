@@ -615,6 +615,7 @@ target_link_libraries(strata-plan PRIVATE strata_plan)
 
 # ---- strata_core (GPU runtime) ---------------------------------------------
 # Only built when a GPU backend is on, so the Phase 1 targets keep working without a toolkit.
+
 strata_gpu_engine()
 
 strata_cpu_kernels()
@@ -649,6 +650,12 @@ if(STRATA_NATIVE_EXPERTS)
     strata_hip_prompt_tests()
   endif()
   if(STRATA_ENABLE_HIP AND TARGET ggml-base)
+    add_executable(hip_native_mmvq_wave tests/hip/native_mmvq_wave.cpp)
+    target_link_libraries(hip_native_mmvq_wave PRIVATE strata_kernels strata_hip_runtime ggml-base)
+    add_test(NAME hip_native_mmvq_generic COMMAND hip_native_mmvq_wave)
+    add_test(NAME hip_native_mmvq_exact COMMAND hip_native_mmvq_wave)
+    set_tests_properties(hip_native_mmvq_generic PROPERTIES TIMEOUT 120 ENVIRONMENT "STRATA_RDNA_MMVQ_WAVE=0")
+    set_tests_properties(hip_native_mmvq_exact PROPERTIES TIMEOUT 120 ENVIRONMENT "STRATA_RDNA_MMVQ_WAVE=3")
     # Optional real-model diagnostic: pass the GGUF shard containing the native PLE key.
     add_executable(hip_ple_iq4 tests/hip/ple_iq4.cpp)
     target_link_libraries(hip_ple_iq4 PRIVATE strata_kernels strata_hip_runtime ggml-base)

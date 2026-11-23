@@ -235,6 +235,7 @@ struct PleReader::Impl {
             free_slots.push_back(s);
             return false;
         }
+        strata::core::progress_beat();   // #4682: a slow drive that still returns rows is not a stopped engine
         strata::core::progress_beat();   // #4682: a slow drive that still returns rows is not a stopped engine (--ple-io direct: random 4 KiB reads, 16 a token)
         record_latency(now_us() - j.issued_us);
         stats.bytes += c.bytes;

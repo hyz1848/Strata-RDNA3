@@ -47,6 +47,8 @@ struct FusedGrArgs {
     /// bytes native_quantize_q8_1 would write); q8_cnt = n_embd / 32 zeroed counters owned by the caller (token 0's)
     uint8_t* q8_mixed = nullptr;
     unsigned* q8_cnt = nullptr;
+    const int8_t* r8_down = nullptr;   ///< STRATA_GR_RDNA_Q8: int8 [hc_lr][hc*n_embd] + fp16 scales (rdna_gr.cu layout)
+    const int8_t* r8_up = nullptr;     ///< int8 [hc*n_embd][hc_lr] + fp16 scales
     /// STRATA_HC_Q8: non-null when w_down / w_up hold int8 codes (same [row][col] layout) with one fp32 scale per
     /// 32 contiguous values here ([row][col / 32]).  w_inject stays bf16.
     const float* s_down = nullptr;
@@ -76,6 +78,13 @@ bool fused_gr_read_multi(const FusedGrArgs* a, int n_tok, float* xn_scratch, voi
                          unsigned long long* stamp_buf = nullptr, int stamp_i0 = 0);
 
 /// The bench only: the AMD latency-hidden kernels on (1) or off (0); -1 = STRATA_GR_FAST.
+bool rdna_gr_enabled();
+bool rdna_r8_scratch_init(long long elems);
+/// a BF16 image of an hc_r8 matrix (rows x cols, row-major as stored) in this device's scratch for `role` (0 down, 1 up)
+const uint16_t* rdna_r8_to_bf16(const int8_t* r8, long long rows, long long cols, int role, void* stream);
+void rdna_gr_read_multi(const FusedGrArgs* a, int n_tok, float* scratch, void* stream,
+                        unsigned long long* stamp_buf = nullptr, int stamp_i0 = 0);
+
 void fused_gr_set_fast(int on);
 /// The bench only: the v3 read's weight-prefetch kernels (STRATA_GR_V3_PF, bit 0 down / bit 1 up) for every read; -1 = the environment.
 void fused_gr_v3_pf(int mask);

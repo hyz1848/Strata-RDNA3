@@ -147,6 +147,9 @@ std::vector<std::pair<std::string, std::string>> launch_default_env(const char* 
 /// returns the names it set.  `integrated` is true when every visible GPU is an integrated one.  Call once, before any
 /// engine code reads its switches (they are read lazily, at first use).  `mmq_built`: llama.cpp's MMQ prompt kernels are in the build (the caller knows:
 /// STRATA_PREFILL_MMQ is defined on strata_prefill only); the gfx12 K-quant line names them only then.
-std::vector<std::string> apply_arch_defaults(const char* gcn_arch, bool integrated = false, int batch_slots = 0, bool mmq_built = true);
+
+std::vector<std::pair<std::string, std::string>> gfx1100_default_env(const char* gcn_arch, int n_devices, bool tensor_parallel);
+
+std::vector<std::string> apply_arch_defaults(const char* gcn_arch, bool integrated = false, int batch_slots = 0, bool mmq_built = true, int n_devices = 0, bool tensor_parallel = false);
 
 }  // namespace strata::core

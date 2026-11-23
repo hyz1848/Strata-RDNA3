@@ -42,6 +42,7 @@ void quantize_act_native(const float* x, int64_t rows, int64_t cols, void* xa, v
 /// through Alloc's 256-byte takes from a 256-aligned cache slot or cudaMalloc).
 void experts_native(const Batch& b, const NativeGeom& g, int n_expert, int64_t n, const void* scratch, const void* xa,
                     const int32_t* src, void* ha, float* dm, void* stream);
+
 /// gfx11 F16 kernels: the next experts_native calls may write the down rows as FP16 (2,560 halves a row, saturated at +-65504) instead of FP32 when the
 /// down runs on an F16 kernel; dm_f16_used() says which form the last call wrote (false on every other path), for moe_combine16.
 void want_dm_f16(bool on);
@@ -75,5 +76,16 @@ int staged_blob_fallbacks();
 /// experts_native() of a WideBatch, on the NT = 256 kernels or the warp-specialized kernel; only when native_wide().
 void experts_native(const WideBatch& b, const NativeGeom& g, int n_expert, int64_t n, const void* scratch, const void* xa,
                     const int32_t* src, void* ha, float* dm, void* stream);
+
+/// [claude] STRATA_PF_F16=1 (gfx11): the native kernels with FP16 operands - weights decoded to FP16 with their scales
+/// applied, FP16 activations and H, FP32 accumulation, no per-WMMA scale epilogue.  f16_on(): requested and available.
+bool f16_on();
+/// x [rows][cols] FP32 -> `xh` FP16 [rows][cols] (saturated to +-65504); cols a multiple of 4
+void act_f16(const float* x, int64_t rows, int64_t cols, void* xh, void* stream);
+/// experts_native() on FP16 rows: `xh` from act_f16, H as FP16 [n][640] in `hh`, down into `dm` as there
+void experts_native_f16(const Batch& b, const NativeGeom& g, int n_expert, int64_t n, const void* scratch, const void* xh,
+                        const int32_t* src, void* hh, float* dm, void* stream);
+/// [claude] STRATA_PREFILL_TIMING: called by experts_native between the gate/up and the down launches (nullptr: none)
+void set_mid_hook(void (*fn)(void*), void* ctx);
 
 }  // namespace strata::prefill::fused

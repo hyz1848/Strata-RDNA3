@@ -6,7 +6,7 @@
 # the GPU engine of the CUDA and HIP builds (strata_core, strata_kernels, strata_prefill, strata_engine, strata, the Qwen3.6 engine and their tests): shared by both backends
 macro(strata_gpu_engine)
 if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
-  add_library(strata_core STATIC src/core/device.cu src/core/pinned.cu src/platform/memory.cpp src/platform/io_priority.cpp src/core/graph.cpp src/core/weights.cpp
+  add_library(strata_core STATIC src/core/device.cu src/core/pinned.cu src/core/arena_shm.cpp src/platform/memory.cpp src/platform/io_priority.cpp src/core/graph.cpp src/core/weights.cpp
                                src/core/layout.cpp)
   target_include_directories(strata_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   # the DFlash2 drafter (src/core/dflash2.cpp, src/kernels/cuda/dflash2.cu) exists in the CUDA and HIP builds; the Metal and SYCL builds compile without it
@@ -86,6 +86,9 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
                           src/kernels/cuda/kv_stream.cu
                           src/kernels/cuda/kv_q4.cu
                           src/kernels/cuda/fused_gr.cu
+                          src/kernels/cuda/rdna_gr.cu
+                          src/kernels/cuda/rdna_mmvq.cu
+                          src/kernels/cuda/megakernel_gdn.cu
                           src/kernels/cuda/cvec.cu
                           src/kernels/cuda/qsa_decode_attn.cu
                           src/kernels/cuda/qsa_prompt_attn.cu
@@ -306,11 +309,11 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   # about arithmetic, and this one knows the ORDER the arithmetic happens in.
   add_library(strata_engine STATIC src/core/layer.cpp src/core/session.cpp src/core/expert_source.cpp src/core/remote_experts.cpp
     src/core/remote_expert_opt.cu
-    src/core/expert_cache.cpp src/core/native_head.cpp src/core/native_dense.cpp src/core/verify.cpp src/core/mtp.cpp src/core/dflash2.cpp
+    src/core/expert_cache.cpp src/core/native_head.cpp src/core/native_dense.cpp src/core/tp.cpp src/core/verify.cpp src/core/mtp.cpp src/core/dflash2.cpp
     src/core/conversation_snapshot.cpp src/core/conversation_state.cpp src/core/conversation_memory.cpp src/core/peer_experts.cpp
     src/core/arch_defaults.cpp src/core/nv_defaults.cpp src/core/vmm.cpp src/core/conversation_file.cpp)
   target_include_directories(strata_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(strata_engine PUBLIC strata_core strata_kernels strata_kernels_cpu ${_strata_gpu_runtime_target})
+  target_link_libraries(strata_engine PUBLIC strata_core strata_kernels strata_kernels_cpu ${_strata_gpu_runtime_target} ${CMAKE_DL_LIBS})
   if(STRATA_BUILD_TESTS AND STRATA_ENABLE_CUDA AND NOT STRATA_HIP_GFX906)
     add_executable(host_graph_launch_test tests/core/host_graph_launch_test.cu)
     target_include_directories(host_graph_launch_test PRIVATE include)
@@ -476,7 +479,7 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   # what composes them into a token.  No tokenizer - the prompt arrives as ids - because Gate C1 compares logits
   # against llama.cpp on the SAME ids and a tokenizer on one side of that comparison is a second variable.
   # plan v0.3 P5: batched prompt processing (tensor-core GEMMs through cuBLAS).
-  add_library(strata_prefill STATIC src/prefill/gemm.cu src/prefill/kernels.cu src/prefill/prefill.cpp)
+  add_library(strata_prefill STATIC src/prefill/gemm.cu src/prefill/kernels.cu src/prefill/prefill.cpp src/prefill/compat_0159.cpp )
   if(STRATA_ENABLE_HIP)
     # #313: the RDNA3 WMMA GEMMs include hip_runtime.h: AMD builds only (a CUDA build never sees this file)
     target_sources(strata_prefill PRIVATE src/prefill/wmma_gemm.cu)
@@ -542,10 +545,25 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   target_include_directories(dflash2_attn_bench PRIVATE ${_strata_gpu_include_directories})
   target_link_libraries(dflash2_attn_bench PRIVATE strata_kernels ${_strata_gpu_runtime_target})
 
-  add_executable(strata src/program/generate.cpp)
+  add_executable(strata src/program/generate.cpp src/core/sdma_copy.cpp)
   strata_utf8_manifest(strata)
   target_include_directories(strata PRIVATE ${_strata_gpu_include_directories})
   target_link_libraries(strata PRIVATE strata_engine strata_prefill strata_spec ${_strata_gpu_runtime_target})
+  if(STRATA_ENABLE_HIP AND NOT WIN32)
+    # src/core/sdma_copy.cpp: the long prompt's refill copies on the SDMA engine through HSA (STRATA_REFILL_SDMA=1)
+    # src/core/kfdq.cpp: park ROCr's idle utility queue so a card holding 9 queues idles at ~5 W (STRATA_KFDQ=0: off)
+    find_library(STRATA_HSA_RUNTIME_LIB hsa-runtime64 HINTS ${CMAKE_PREFIX_PATH} ${CMAKE_HIP_COMPILER_ROCM_ROOT} $ENV{ROCM_PATH}
+                 PATH_SUFFIXES lib lib64)
+    target_sources(strata PRIVATE src/core/kfdq.cpp)
+    target_link_options(strata PRIVATE "LINKER:--export-dynamic-symbol=ioctl")
+    target_link_libraries(strata PRIVATE ${CMAKE_DL_LIBS})
+    if(STRATA_HSA_RUNTIME_LIB)
+      target_link_libraries(strata PRIVATE ${STRATA_HSA_RUNTIME_LIB})
+    else()
+      message(WARNING "libhsa-runtime64 not found: STRATA_REFILL_SDMA=1 falls back to hipMemcpyAsync")
+      target_compile_definitions(strata PRIVATE STRATA_NO_HSA=1)
+    endif()
+  endif()
   if(WIN32 AND STRATA_ENABLE_HIP)
     # 0.2.1.2: the ROCm math libraries live in <package>\rocm\bin, which is on PATH only when the launcher starts the engine; load them on first
     # use (main() adds that folder to the DLL search first) so `strata.exe --version` works from the package folder.  amdhip64_7.dll and the
@@ -556,6 +574,16 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
 
   # NEW-MODELS-PLAN.md T1: Qwen3.6-35B-A3B's reference path (one GPU, the model resident, plain kernels), checked
   # against llama.cpp by tools/qwen35/; the engine itself does not run the family yet
+  set(STRATA_ROCWMMA_INCLUDE_DIR "" CACHE PATH "rocWMMA include directory for optional gfx1100 QSA selection")
+  if(STRATA_ENABLE_HIP AND STRATA_ROCWMMA_INCLUDE_DIR)
+    if(NOT EXISTS "${STRATA_ROCWMMA_INCLUDE_DIR}/rocwmma/rocwmma.hpp")
+      message(FATAL_ERROR "STRATA_ROCWMMA_INCLUDE_DIR must contain rocwmma/rocwmma.hpp")
+    endif()
+    target_include_directories(strata_kernels PRIVATE ${STRATA_ROCWMMA_INCLUDE_DIR})
+  endif()
+  if(STRATA_ENABLE_HIP)
+    set_source_files_properties(src/kernels/cuda/megakernel_gdn.cu PROPERTIES COMPILE_OPTIONS "-mllvm;-amdgpu-sched-strategy=max-ilp")
+  endif()
   add_executable(strata-q36ref src/qwen35/q36ref.cu)
   target_include_directories(strata-q36ref PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
   target_link_libraries(strata-q36ref PRIVATE strata_kernels strata_warnings ${_strata_gpu_runtime_target})

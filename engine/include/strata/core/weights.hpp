@@ -90,10 +90,19 @@ struct WeightRef {
     const void* native_data = nullptr;
     void* native_q8_1 = nullptr;
     int native_type = -1;
+    /// [claude] TP alias with a map (STRATA_TP_ALIAS_MAP, Q8_0 GDN projections only): native_data is the FULL matrix
+    /// (map_pitch blocks a row); this card's logical row r is full row r + map_radd[k] (k: the last range with
+    /// map_rlo[k] <= r); its logical block column c is full block c + (c / map_cw) * map_cgap + map_cadd (equal ranges
+    /// map_cw blocks wide, map_cw + map_cgap apart; map_cw 0: c + map_cadd).  map_pitch 0: no map.
+    int map_pitch = 0, map_nr = 0, map_cw = 0, map_cgap = 0, map_cadd = 0;
+    int map_rlo[8] = {}, map_radd[8] = {};
     uint64_t native_bytes = 0;   ///< the size of `native_data`'s payload (BW-5: the L2 prefetch of the next layer's weights)
     /// S23 experiment (STRATA_HC_Q8=1): a hyper-connection projection's Q8_0 bytes as the GGUF stores them, owned by
     /// NativeDense, for the verify window's read (every other path keeps the pack's BF16 `data`)
     const void* hc_q8 = nullptr;
+    /// STRATA_GR_RDNA_Q8=1: the same projection as int8 [ne1][ne0] then fp16 scales [ne1][ne0/32] (at an offset rounded
+    /// up to 256 bytes) - the RDNA read's layout (rdna_gr.cu), from the GGUF's Q8_0 or quantized from its BF16
+    const void* hc_r8 = nullptr;
     /// Plan v0.3 P1: false when the loader SKIPPED this tensor's canonical bytes because another form serves it
     /// (native GGUF projections, the native head).  The metadata above stays valid; `data` is null.
     bool resident = true;
@@ -151,6 +160,7 @@ public:
 
 private:
     friend class NativeDense;
+    friend class TpWeights;   // tensor parallel: a copy of the table with sliced tensors (tp.hpp)
     std::map<std::string, WeightRef> table_;
     LoadReport report_;
     std::string pack_dir_;
