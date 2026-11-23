@@ -7857,7 +7857,7 @@ int main(int argc, char** argv) {
     auto batch_max_t = [&]() -> int {
         // (--batch-mtp and STRATA_PIPED_MTP draft with the draft layer's kernels, built for the narrow window: their windows
         // stay at most kVerifyNarrowT rows; only the plain batch windows are wide)
-        if (batch_mtp && !piped_mtp) return (int) strata::kernels::kVerifyNarrowT;
+        if (batch_mtp && !piped_mtp) return (int) std::min<int>(o.batch * (o.mtp_max_t > 0 ? std::min(o.mtp_max_t, (int) o.spec) : (int) o.spec), strata::kernels::kVerifyMaxT);   // fork: wide batch-MTP
         const int plain = std::max(o.spec, std::min(o.batch, (int) strata::kernels::kVerifyMaxT));
         const int group_rows = (piped_mtp && o.batch_groups > 1 && o.batch > 0)
             ? std::min<int>(strata::kernels::kVerifyNarrowT, pm_group_rows()) : 0;
@@ -8294,7 +8294,7 @@ int main(int argc, char** argv) {
                                  vram_free_note().c_str());
                     return 1;
                 }
-                d->set_max_drafts(piped_mtp ? pm_drafts : 1);   // the serial windows verify one proposal per slot
+                d->set_max_drafts(piped_mtp ? pm_drafts : std::max(1, std::min((o.mtp_max_t > 0 ? std::min(o.mtp_max_t, (int) o.spec) : (int) o.spec) - 1, (int) strata::kernels::kVerifyMaxT / std::max(1, o.batch) - 1)));   // fork: fill the window
                 d->set_ple_session(bslot_ss[0][(size_t) b].get());
                 slot_mtp.push_back(std::move(d));
             }
@@ -13217,7 +13217,8 @@ int main(int argc, char** argv) {
                             : !batch_mtp && o.batch_groups > 1 ? std::max<int>(strata::kernels::kVerifyNarrowT, o.batch)
                             : !batch_mtp ? std::max<int>(strata::kernels::kVerifyNarrowT,
                                                          std::min<int>(o.batch, strata::kernels::kVerifyMaxT))
-                                         : strata::kernels::kVerifyNarrowT;
+                                         : std::max<int>(strata::kernels::kVerifyNarrowT,
+                                                         std::min<int>(o.batch * (o.mtp_max_t > 0 ? std::min(o.mtp_max_t, (int) o.spec) : (int) o.spec), strata::kernels::kVerifyMaxT));
             const size_t hb = (size_t) hrows * (size_t) strata::core::Verifier::handoff_floats(g) * sizeof(float);
             std::vector<float*> hand((size_t) n_stages - 1, nullptr);
             for (size_t si = 0; si < hand.size(); ++si) {
@@ -17011,7 +17012,7 @@ int main(int argc, char** argv) {
             // Each MTP slot uses two rows; rotate slots when more than four are active.
             int A = 0;
             // (--batch-mtp: two rows a slot, at most kVerifyNarrowT; the plain windows hold up to kVerifyMaxT)
-            const int win_cap = batch_mtp ? (int) strata::kernels::kVerifyNarrowT : (int) strata::kernels::kVerifyMaxT;
+            const int win_cap = (int) strata::kernels::kVerifyMaxT;   // fork: batch-MTP takes the wide window
             int nrow[strata::kernels::kVerifyMaxT] = {};   // the rows slot a (the a-th active) holds: its token and its drafts
             // DFlash2 slots: the rows beyond one a slot are SPARE; they carry the slots' drafts, shared evenly in slot order (so the layout of a window
             // depends on which slots are active, not on the drafts: the captured batch graphs are reused).  More slots than rows: no drafts, the slots
@@ -17064,11 +17065,16 @@ int main(int argc, char** argv) {
                 }
 #endif
             }
+            int n_act = 0;
+            for (const BSlot& q0 : bs) if (q0.active) ++n_act;
+            const int per_cap = std::max(0, win_cap / std::max(1, n_act) - 1);   // fork: rows a slot may fill so every active slot fits
             for (size_t offset = 0; offset < bs.size(); ++offset) {
                 const int b = (int) ((next_slot + offset) % bs.size());
                 if (!bs[(size_t) b].active) continue;
-                const int extra = batch_df2 ? (b < (int) (sizeof df2_extra / sizeof df2_extra[0]) ? df2_extra[b] : 0) : batch_mtp ? 1 : 0;
-                if (S + 1 + extra > win_cap) break;
+                int extra = batch_df2 ? (b < (int) (sizeof df2_extra / sizeof df2_extra[0]) ? df2_extra[b] : 0) : 0;
+                if (batch_mtp && !batch_df2) extra = std::max(0, std::min(std::min(bs[(size_t) b].n_drafts, per_cap), win_cap - S - 1));
+                if (S + 1 > win_cap) break;
+                if (S + 1 + extra > win_cap) extra = std::max(0, win_cap - S - 1);
                 BSlot& q = bs[(size_t) b];
                 if (batch_mtp && !q.draft_ready && !batch_df2) {
                     err = "batch MTP: a live slot has no draft";
@@ -17275,15 +17281,18 @@ int main(int argc, char** argv) {
                         // queued on the drafter's own stream after the window's host sync, so the draft graph reads it.
                         const strata::core::OnDevice on_slot_mtp(slot_mtp[(size_t) b]->device());
                         const size_t stride = (size_t) g.hc * (size_t) g.n_embd;
+                        const int feed = std::min<int>((o.mtp_max_t > 0 ? std::min(o.mtp_max_t, (int) o.spec) : (int) o.spec), std::max(1, nrow[t]));
+                        int nd = 1;
                         if (cudaMemcpyAsync(slot_mtp_rows[(size_t) b].get(),
                                             ver.final_R_all() + (size_t) first[t] * stride,
-                                            2 * stride * sizeof(float), cudaMemcpyDeviceToDevice,
+                                            (size_t) feed * stride * sizeof(float), cudaMemcpyDeviceToDevice,
                                             slot_mtp[(size_t) b]->stream()) != cudaSuccess ||
-                            !slot_mtp[(size_t) b]->draft(2, outb + first[t], pos[first[t]], keep[b] - 1,
-                                                        sl.draft.data(), err)) {
+                            !slot_mtp[(size_t) b]->draft(feed, outb + first[t], pos[first[t]], keep[b] - 1,
+                                                        sl.draft.data(), err, nullptr, (float) o.spec_min_p, &nd)) {
                             std::printf("ERR batch MTP slot %d: %s\n", b, err.c_str());
                             return false;
                         }
+                        sl.n_drafts = std::max(1, std::min(nd, per_cap > 0 ? per_cap : 1));
                         sl.draft_ready = true;
                     }
                 }
