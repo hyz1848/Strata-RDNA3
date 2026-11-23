@@ -1,189 +1,201 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="app/host/public/brand/strata-lockup-dark.svg">
-    <img src="app/host/public/brand/strata-lockup-light.svg" alt="Strata" width="340">
-  </picture>
-</p>
+# Strata-RDNA3
 
-<h3 align="center">Run powerful AI on your own computer.</h3>
-<p align="center">Chat, code and work with images, locally.</p>
+RDNA3 (Radeon RX 7900 XTX, gfx1100) optimizations merged onto the current Strata engine, with
+batch concurrency that raises aggregate throughput above a single stream.
 
-<p align="center">
-  <a href="#models">Models</a> · <a href="#install"><b>Install</b></a> ·
-  <a href="#hardware">Hardware</a> · <a href="#tools">Tools</a> ·
-  <a href="#help">Help</a> · <a href="#support-strata">Support</a>
-</p>
+This build runs Qwen3.8-Flash-Next IQ3_S with MTP speculative decoding, vision, a 256k context
+and four concurrent request slots on two RX 7900 XTX cards.
 
-<p align="center">
-  <a href="https://github.com/Niko1221/Strata/releases/latest"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?label=download&color=0ab887" alt="Download Strata"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Niko1221/Strata" alt="MIT license"></a>
-  <a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor-EA4AAA?logo=githubsponsors&logoColor=fff" alt="Sponsor Strata on GitHub Sponsors"></a>
-  <a href="https://buymeacoffee.com/strataengine"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="Support Strata on Buy Me a Coffee"></a>
-</p>
+![Benchmark: prefill and decode against prompt length](docs/media/bench-2x7900xtx.svg)
 
-<p align="center"><sub><b>English</b> · <a href="docs/lang/README.zh-CN.md">简体中文</a> · <a href="docs/lang/README.ja.md">日本語</a> · <a href="docs/lang/README.de.md">Deutsch</a> · <a href="docs/lang/README.fr.md">Français</a> · <a href="docs/lang/README.es.md">Español</a> · <a href="docs/lang/README.pt-BR.md">Português</a> · <a href="docs/lang/README.pl.md">Polski</a></sub></p>
+## What this build adds
 
-**Free, open source, and yours to run.** Use Strata on your desktop or with your favorite coding tools. No account needed.
+1. **The RDNA3 work, on current Strata code.** The gfx1100 optimizations from the Strata-rdna3
+   fork (tensor-parallel and data-parallel prompt paths, fused int8 expert kernels, MMQ prompt
+   tiles, hipBLASLt tuning tables, expert-cache policies, MTP slot drafters, wide verify windows
+   of 9-16 rows) are merged into the current Strata engine source (0.1.59) instead of living in a
+   fork that trails the engine. The tree builds, passes the engine's parity tests, and serves.
 
-## Models
+2. **Concurrency that pays.** Four batch slots plus the solo path for a lone request. A single
+   request keeps MTP and decodes at 119-146 tok/s. Four concurrent requests decode at about
+   **200 tok/s aggregate**, flat from 4K to 64K prompts, while each request still runs at
+   12-33 tok/s. A request that arrives while another is running joins a batch slot instead of
+   queueing behind it.
 
-We recommend **ISTA-DASLab first**, then **Unsloth** and other providers, where a compatible model fits.
+3. **Fast prompt reads with concurrency.** The data-parallel prompt path (both cards read the
+   prompt on alternating chunks) normally requires a single-slot engine. Here it runs beside the
+   batch slots for a lone request: 32K prompts prefill at about 5,200 tok/s (about 3,950 without
+   it) while the four slots stay available for bursts.
 
-<details>
-<summary><img src="docs/media/models/qwen.svg" width="22" alt="" align="middle"> &nbsp;<b>Qwen3.8-Flash-Next</b></summary>
+## Credits
 
-| Provider | Choices |
-| --- | --- |
-| **ISTA-DASLab · recommended** | Q2\_0, IQ2\_XS, IQ3\_XXS, IQ3\_S. [Coder: IQ1\_M](docs/MODELS.md#coder) for coding. |
-| **Unsloth** | UD-IQ4\_XS, UD-Q4\_K\_XL, UD-Q5\_K\_XL, UD-Q6\_K\_XL, Q8\_0 |
-| **Gyro · agentionai** | [Gyro-S, Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF). Lower memory use but slower. |
-| **Other options** | [Swift 1.5](docs/MODELS.md#swift-15), [NVFP4](docs/NVFP4.md), [OrcaRouter](docs/ORCA.md) |
+This project is a merge, not a rewrite. It would not exist without:
 
-[Compare sizes, memory needs and compatibility](docs/MODELS.md).
+- **[Strata](https://github.com/Niko1221/Strata)** by Niko1221 and contributors - the engine,
+  its kernels, the batching and speculative-decoding design. MIT licensed.
+- **[Strata-rdna3](https://github.com/nicejunjie/Strata-rdna3)** by nicejunjie and its
+  contributors (cennac, Vop3p and others) - the gfx1100 tuning this build is based on:
+  hipBLASLt tables, MMQ prompt tiles, the TP/DP prompt paths, expert-cache policies, the batch
+  solo-path work and the wide-window kernels.
+- **rocWMMA**, **ggml / llama.cpp** kernels, and **AMD ROCm** for the lower layers.
 
-</details>
+If you use this work, please credit Strata and the Strata-rdna3 fork first.
 
-<details>
-<summary><img src="docs/media/models/qwen.svg" width="22" alt="" align="middle"> &nbsp;<b>Qwen3.6-35B-A3B</b></summary>
+## Hardware and software
 
-**Unsloth:** UD-Q4_K_XL, UD-Q6_K_XL, Q8_0. These are the currently documented packs for this model.
+| | |
+|---|---|
+| GPUs | 2x AMD Radeon RX 7900 XTX 24 GB (gfx1100), PCIe 4.0 x8 each, no xGMI |
+| CPU / RAM | Ryzen 9 9900X, 121 GB DDR5 |
+| OS / ROCm | Ubuntu, kernel 7.0, ROCm SDK 10.3 (venv), in-kernel amdgpu |
+| Engine | Strata 0.1.59 + the RDNA3 merge, HIP backend, gfx1100 |
+| Model | DavidAU Qwen3.8-Flash-Next-Abliterated-Turbo-50x-Reasoning IQ3_S (GSQ-RCO), 84 GB with its 26.8 GiB PLE table |
+| Context | 256k tokens (the model's native context), int8 KV, 32k KV resident |
+| Concurrency | 4 batch slots (`--batch 4`), MTP (`--spec 4`), vision |
 
-[Model guide and compatibility](docs/QWEN36.md).
+## Features
 
-</details>
+- Layer split across two cards (24/24 layers), with the DP prompt path for long prompts.
+- MTP speculative decoding on the solo path; batch slots use the batch path.
+- Four concurrent request slots. A lone request automatically uses the solo path; a newcomer
+  stops it and it continues in a slot with its prefix reused.
+- 256k native context (no YaRN needed), int8 KV cache, conversation cache (8 slots).
+- Vision (image input) through a separate vision encoder.
+- Fused int8 expert kernels, MMQ prompt tiles, hipBLASLt tuning for gfx1100.
+- Wide verify windows (9-16 rows) for wide batch windows.
 
-<a id="the-other-sizes"></a>
+## Configuration
 
-Not sure what fits? [Choose a model for your computer](docs/MODELS.md#pick-by-memory).
+Key engine flags used in production:
 
-## Install
+```
+--layer-split 24 --batch 4
+--prefill 18432
+--spec 4 --spec-min-p 0.5 --mtp /path/to/mtp/rt --mtp-q4 all --mtp-window 4096
+--lookup-chain 3
+--kv int8 --kv-resident 32768
+--max-context 262144
+--conversation-cache-mib 8192 --conversation-cache-slots 8
+--expert-cache auto --ple-io direct --ple-row-cache 1048576
+--pool-workers 8 --vram-reserve-mib 1024 --pcie-frac 0
+--vision
+```
 
-<a id="option-a-the-strata-app"></a>
+Environment that matters on gfx1100:
 
-### Desktop app
+```
+STRATA_HIPBLASLT_TUNING=tools/hip/gfx1100-hipblaslt-100500.txt
+STRATA_PREFILL_MMQ_TILE_ROWS=32
+STRATA_PEER_TRANSPORT=host
+GPU_MAX_HW_QUEUES=8
+STRATA_REFILL_SDMA=0
+HSA_USERPTR_FOR_PAGED_MEM=0
+HSA_SVM_FOR_PAGED_MEM=0
+STRATA_DP_PREFILL=1
+STRATA_DP_EARLY_REFILL=0
+```
 
-**[Download Strata for Windows, Linux or Mac →](https://github.com/Niko1221/Strata/releases/latest)**
+`STRATA_DP_PREFILL=1` enables the two-card prompt path; the merge lets it run beside idle slots.
+The HSA variables stop the kernel from reclaiming GPU-mapped expert memory (queue stalls and the
+60 s watchdog on ROCm 10.2+).
 
-Install the app, choose a model, and start chatting. There is one installer for each system. On first start the app
-downloads the engine for your graphics card. [Help with the installer](docs/INSTALL.md#the-app).
+Sampling: temperature 0, thinking off, `presence_penalty 0` (a nonzero penalty forces serial
+decode and lowers MTP acceptance).
 
-<sub>Files: `Strata-0.2.19-windows-x64-setup.exe` · `Strata-0.2.19-linux-x86_64.AppImage` · `Strata-0.2.19-macos-arm64.dmg`</sub>
+## Performance
 
-<p align="center">
-  <img src="docs/media/app-chat.png" width="900" alt="Strata desktop app with a chat and live code preview side by side">
-  <br><sub>Chat, files and a live preview in one window.</sub>
-</p>
+Measured with `tools/bench.py`. Each prompt is a synthetic document of N tokens with three
+5-character codes at the start, middle and end; the model must return the codes and then write an
+English guide (`prose`) or a Python module (`code`). A run counts only when all three codes come
+back with exactly 256 output tokens. The nominal targets are about 7% larger than the actual
+prompt tokens after the tokenizer; the tables show the server's actual tokens.
 
-<a id="option-b-the-terminal-one-line"></a>
+### Single request
 
-### Terminal app
+A lone request uses the solo path with MTP and the decode pipeline. Median of 3 runs.
 
-Prefer the terminal? Install Strata, then run **`strata launch`**.
+| target | actual prompt | prefill tok/s | decode tok/s (prose) | decode tok/s (code) |
+|---:|---:|---:|---:|---:|
+| 4K | 3,852 | 2,020 | 126.1 | 145.9 |
+| 8K | 7,638 | 2,588 | 124.2 | 143.3 |
+| 16K | 15,210 | 3,609 | 124.0 | 145.2 |
+| 32K | 30,356 | 5,425 | 119.2 | 140.7 |
+| 64K | 60,642 | 5,704 | 122.9 | 136.5 |
+| 128K | 121,218 | 5,700 | 118.3 | 139.6 |
 
-<details open>
-<summary><b>Install commands</b></summary>
+Prefill rises with prompt length as fixed costs amortize, then flattens at about 5,700 tok/s
+from 32K up. Decode is flat at 118-146 tok/s.
 
-**Linux / Mac**
+### Four concurrent requests
+
+Four requests launched together, each with its own codes and nonce. `aggregate decode` is the
+engine's own `tok_s` summed over the four slots during the decode phase (the concurrency number);
+`aggregate end-to-end` is 4 x 256 output tokens divided by the wall time, prefill included;
+`per-request decode` is the median of each request's decode rate. Median of 2 bursts.
+
+| target | actual prompt | wall | aggregate decode tok/s | aggregate end-to-end tok/s | per-request decode tok/s |
+|---:|---:|---:|---:|---:|---:|
+| 4K | 3,853 | 12.9 s | **204.3** | 79.5 | 32.4 |
+| 8K | 7,639 | 17.0 s | **206.5** | 60.3 | 27.5 |
+| 16K | 15,211 | 22.3 s | **202.6** | 45.9 | 23.0 |
+| 32K | 30,357 | 28.1 s | **201.2** | 36.4 | 19.3 |
+| 64K | 60,643 | 49.4 s | **197.2** | 20.8 | 12.4 |
+
+The aggregate decode throughput is about **200 tok/s at every length**: four slots decode
+together at 1.4-1.7x a single stream (119-146 tok/s), and the sum does not fall as the context
+grows. End-to-end throughput is lower only because the four prompt reads share the cards; that is
+the prefill, not the decode. Per-request latency falls as the four slots share the two cards.
+
+## Build
+
+Requirements: ROCm SDK (HIP), CMake, Ninja, rocWMMA headers, and the model pack.
 
 ```sh
-curl -fsSL --connect-timeout 15 --max-time 120 https://github.com/Niko1221/Strata/releases/latest/download/install.sh -o install.sh && sh install.sh
+R=/path/to/rocm-sdk
+export HIP_PLATFORM=amd HIP_COMPILER=clang HIP_RUNTIME=rocclr ROCM_PATH=$R HIP_PATH=$R
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_HIP_ARCHITECTURES=gfx1100 -DCMAKE_HIP_COMPILER=$R/llvm/bin/clang++ \
+  -DSTRATA_ENABLE_HIP=ON \
+  -DSTRATA_PREFILL_MMQ=ON -DSTRATA_MMQ_KQUANTS=ON \
+  -DSTRATA_ROCWMMA_INCLUDE_DIR=/path/to/rocWMMA/library/include \
+  -DCMAKE_PREFIX_PATH=$R
+cmake --build build -j12
 ```
 
-**Windows PowerShell**
+The engine binary is `build/strata`.
 
-```powershell
-irm -TimeoutSec 120 https://github.com/Niko1221/Strata/releases/latest/download/install.ps1 | iex
-```
-
-On Windows, open a new terminal afterwards. Then:
+## Run
 
 ```sh
-strata launch
+LD_LIBRARY_PATH=$R/lib ./build/strata --serve \
+  --pack /path/to/pack --native /path/to/model-00001-of-00002.gguf \
+  --ple-gguf /path/to/model-00002-of-00002.gguf \
+  --mtp /path/to/mtp/rt --spec 4 \
+  --layer-split 24 --batch 4 --prefill 18432 \
+  --kv int8 --kv-resident 32768 --max-context 262144
 ```
 
-Follow the prompts to download and start a model. [Terminal guide](docs/TERMINAL_LAUNCH.md).
+Or through the Strata server, which adds the OpenAI-compatible API on port 1234:
 
-</details>
+```sh
+python serve/server.py --engine strata --config strata.json --port 1234
+```
 
-<p align="center">
-  <img src="docs/media/terminal-monitor.png" width="900" alt="Strata terminal app showing model activity, speed, memory and recent requests">
-  <br><sub>Watch your model and hardware while it runs.</sub>
-</p>
+## Repository layout
 
-<a id="build-from-source"></a>
+| Path | Contents |
+|---|---|
+| `src/core/` | verifier, prefill, MTP, expert sources, caches |
+| `src/kernels/` | HIP/CUDA kernels (fused GR, router, MMQ, wide windows) |
+| `src/program/` | `generate.cpp`, `verify.cpp`, server wiring |
+| `src/prefill/` | prompt path, compatibility layer |
+| `include/` | public headers |
+| `rdna3/` | gfx1100 configs, tuning tables, MTP draft vocab, bench harness |
+| `tools/` | `bench.py`, `monitor.py`, `iq_test.py` |
+| `docs/media/` | benchmark chart |
+| `BENCH.md` | full benchmark notes and methodology |
 
-[Build from source](docs/SOURCE_INSTALL.md) · [Docker](docs/DOCKER.md) · [Full install guide](docs/INSTALL.md)
+## License
 
-<a id="what-you-need"></a>
-
-## Hardware
-
-| Supported hardware | Guide |
-| --- | --- |
-| **NVIDIA GeForce RTX 20 / 30 / 40 / 50 series** | [NVIDIA setup](docs/INSTALL.md#what-you-need) |
-| **AMD Radeon RX 7700 / 7800 / 7900, RX 9060 / 9070, AI PRO R9700** | [AMD setup](docs/AMD_HIP.md) |
-| **AMD Radeon RX 6800 / 6900 · experimental** | [RX 6000 setup](docs/AMD_HIP.md#rdna2-gfx1030) |
-| **Intel Arc · Linux** | [Intel setup](docs/INTEL_ARC.md) |
-| **Apple Silicon · M1 or newer** | [Mac setup](docs/MAC.md) |
-| **AMD Ryzen AI Max · Strix Halo** | [Strix Halo setup](docs/STRIX_HALO.md) |
-| **NVIDIA DGX Spark · Linux** | [DGX Spark setup](docs/DGX_SPARK_LINUX.md) |
-
-<a id="using-it"></a>
-
-## Tools
-
-**Claude Code · Codex CLI · OpenCode · oh-my-pi · pi.dev · Hermes Agent · OpenClaw**, and more through the OpenAI- and Anthropic-compatible APIs.
-
-Run **`strata connect`** to see setup instructions for your tool. [Connection guide](docs/TERMINAL_LAUNCH.md#connect-your-apps-strata-connect).
-
-<a id="guides"></a>
-<a id="how-fast-is-it"></a>
-<a id="how-does-it-work"></a>
-<a id="something-went-wrong"></a>
-
-## Help
-
-[All guides](docs) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Report a bug](https://github.com/Niko1221/Strata/issues/new/choose) ·
-[Benchmarks](docs/COMMUNITY_BENCHMARKS.md) · [How it works](docs/HOW_IT_WORKS.md) · [Contribute](.github/CONTRIBUTING.md)
-
-## Support Strata
-
-**Help keep local AI open to everyone.** A GitHub sponsorship or a coffee helps fund development and testing on more hardware.
-
-<a href="https://github.com/sponsors/Niko1221"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors: sponsor Strata" height="48"></a>
-<a href="https://buymeacoffee.com/strataengine"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee: support Strata" height="48"></a>
-
-### Loyal supporters
-
-Thank you to everyone who supports Strata.
-
-<!-- supporters:start (generated from the public GitHub sponsors: one row per level, the biggest supporters first and largest; private sponsors are not listed) -->
-<a href="https://github.com/codeconduit-official"><img src="https://images.weserv.nl/?url=github.com/codeconduit-official.png&w=240&h=240&fit=cover&mask=circle&output=png" width="120" height="120" alt="codeconduit-official" title="codeconduit-official"></a>
-
-<a href="https://github.com/kod88vn"><img src="https://images.weserv.nl/?url=github.com/kod88vn.png&w=160&h=160&fit=cover&mask=circle&output=png" width="80" height="80" alt="kod88vn" title="kod88vn"></a>
-<a href="https://github.com/router0mail"><img src="https://images.weserv.nl/?url=github.com/router0mail.png&w=160&h=160&fit=cover&mask=circle&output=png" width="80" height="80" alt="router0mail" title="router0mail"></a>
-<a href="https://github.com/kingdonb"><img src="https://images.weserv.nl/?url=github.com/kingdonb.png&w=160&h=160&fit=cover&mask=circle&output=png" width="80" height="80" alt="kingdonb" title="kingdonb"></a>
-<a href="https://github.com/Daisame"><img src="https://images.weserv.nl/?url=github.com/Daisame.png&w=160&h=160&fit=cover&mask=circle&output=png" width="80" height="80" alt="Daisame" title="Daisame"></a>
-
-<a href="https://github.com/ryan4yin"><img src="https://images.weserv.nl/?url=github.com/ryan4yin.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="ryan4yin" title="ryan4yin"></a>
-<a href="https://github.com/themactep"><img src="https://images.weserv.nl/?url=github.com/themactep.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="themactep" title="themactep"></a>
-<a href="https://github.com/macintog"><img src="https://images.weserv.nl/?url=github.com/macintog.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="macintog" title="macintog"></a>
-<a href="https://github.com/bisonbet"><img src="https://images.weserv.nl/?url=github.com/bisonbet.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="bisonbet" title="bisonbet"></a>
-<a href="https://github.com/vizv"><img src="https://images.weserv.nl/?url=github.com/vizv.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="vizv" title="vizv"></a>
-<a href="https://github.com/seoulworker"><img src="https://images.weserv.nl/?url=github.com/seoulworker.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="seoulworker" title="seoulworker"></a>
-<a href="https://github.com/jaceknoga"><img src="https://images.weserv.nl/?url=github.com/jaceknoga.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="jaceknoga" title="jaceknoga"></a>
-<a href="https://github.com/jackyini"><img src="https://images.weserv.nl/?url=github.com/jackyini.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="jackyini" title="jackyini"></a>
-<a href="https://github.com/moruku36"><img src="https://images.weserv.nl/?url=github.com/moruku36.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="moruku36" title="moruku36"></a>
-<a href="https://github.com/hrkgk"><img src="https://images.weserv.nl/?url=github.com/hrkgk.png&w=112&h=112&fit=cover&mask=circle&output=png" width="56" height="56" alt="hrkgk" title="hrkgk"></a>
-<!-- supporters:end -->
-
-All supporters and how to support Strata: [SUPPORTERS.md](SUPPORTERS.md)
-
-[MIT license](LICENSE) · [Credits and model licenses](docs/HOW_IT_WORKS.md#credits) · [Privacy](docs/SAFETY.md)
-
-<a id="option-c-let-your-ai-set-it-up"></a>
-
-<sub>For AI tools and automated readers: <a href="AGENTS.md">technical reference</a> · <a href="docs/AI_SETUP.md">setup instructions</a>.</sub>
-
-**Sponsorships, hardware partnerships or collaborations:** [niko.veit@outlook.com](mailto:niko.veit@outlook.com).
-
+MIT, following Strata. See [LICENSE](LICENSE). Strata is Copyright its authors; the RDNA3
+optimizations are from the Strata-rdna3 fork and its contributors.

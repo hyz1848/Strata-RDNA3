@@ -2,9 +2,9 @@
 # Build a Strata image from an engine component package. Run it on a Linux x86_64 machine with Docker (it needs the internet
 # for the base image and for the Terminal's pinned Python and locked wheels; the engine package is local).
 #
-#   docker/build.sh --flavor cuda --engine ~/pkgs/0.1.45.3-linux-x86_64-cuda-cuda13 --tag strata:0.2.7-cuda13
-#   docker/build.sh --flavor hip  --engine ~/pkgs/0.1.45.3-linux-x86_64-hip-gfx120X  --tag strata:0.2.7-rocm-gfx120x
-#   docker/build.sh --flavor sycl --engine ~/pkgs/0.1.45.3-linux-x86_64-sycl         --tag strata:0.2.7-sycl
+#   docker/build.sh --flavor cuda --engine ~/pkgs/0.1.45.3-linux-x86_64-cuda-cuda13 --tag strata:0.2.3-cuda13
+#   docker/build.sh --flavor hip  --engine ~/pkgs/0.1.45.3-linux-x86_64-hip-gfx120X  --tag strata:0.2.3-rocm-gfx120x
+#   docker/build.sh --flavor sycl --engine ~/pkgs/0.1.45.3-linux-x86_64-sycl         --tag strata:0.2.3-sycl
 #
 # --engine is the package FOLDER that packaging/package_engine.py wrote (engine-component.json inside). It can be given more than
 # once to put several packages in one image (the Terminal picks the one that fits the card).
@@ -22,15 +22,13 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-repo=$(CDPATH= cd -- "$here/../.." && pwd -P)
+repo=$(CDPATH= cd -- "$here/.." && pwd -P)
 flavor=""; tag=""; base=""; version=""; ctx=""; nocache=""; ctxonly=""
-engines=""; shape_engines=""
+engines=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --flavor) flavor=$2; shift 2 ;;
     --engine) engines="$engines
-$2"; shift 2 ;;
-    --shape-engine) shape_engines="$shape_engines
 $2"; shift 2 ;;
     --tag) tag=$2; shift 2 ;;
     --base) base=$2; shift 2 ;;
@@ -48,13 +46,13 @@ case "$flavor" in cuda|hip|sycl) ;; *) echo "build.sh: --flavor must be cuda, hi
 [ -n "$engines" ] || { echo "build.sh: --engine <package folder> is required" >&2; exit 2; }
 [ -n "$base" ] || { [ "$flavor" = sycl ] && base=ubuntu:26.04 || base=ubuntu:24.04; }
 if [ -z "$version" ]; then
-  version=$(sed -n 's/^[[:space:]]*project([^)]*VERSION[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$repo/engine/CMakeLists.txt" | head -1)
+  version=$(sed -n 's/^[[:space:]]*project([^)]*VERSION[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$repo/CMakeLists.txt" | head -1)
   version=${version:-dev}
 fi
 
 own_ctx=""
 if [ -z "$ctx" ]; then ctx=$(mktemp -d "${TMPDIR:-/tmp}/strata-docker-ctx.XXXXXX"); own_ctx=1; fi
-mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/shapes" "$ctx/docker"
+mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/docker"
 cleanup() { if [ -n "$own_ctx" ] && [ -z "$ctxonly" ]; then rm -rf "$ctx"; fi; }
 trap cleanup EXIT
 
@@ -63,21 +61,14 @@ commit=${STRATA_BUILD_COMMIT:-$(git -C "$repo" rev-parse HEAD 2>/dev/null || tru
 case "$commit" in *[!0-9a-f]*|"") commit="" ;; esac
 
 # 1. the Terminal's sources: exactly what packaging/package_terminal.py copies (the working tree, so local edits are in the image)
-# tools/: every .py at any depth (package_terminal.py may name a nested tool; the Dockerfile's terminal stage stops at "installer tool missing"
-# when one is not in the context)
 cd "$repo"
-# metal/tools/: the two repack scripts the bundle carries (INSTALLER_METAL_TOOLS in package_terminal.py; without them the terminal stage
-# stops at "No such file or directory: '/src/metal/tools/metal_repack.py'", as the v0.2.11 image build did)
-# engine/third_party/strata-gguf-py: the model preparation tools the bundle carries (INSTALLER_THIRD_PARTY in package_terminal.py; without it the
-# terminal stage stops at "No such file or directory: '/src/engine/third_party/strata-gguf-py'", as the first v0.2.16 image build did)
-paths="tools/packaging terminal/bin terminal/strata.py terminal/strata_control terminal/strata_cli terminal/serve terminal/requirements.txt terminal/requirements-monitor.txt docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md terminal/data terminal/bench/prompts/standard-v1 terminal/setup.py terminal/ref/load.py engine/CMakeLists.txt engine/metal/tools/metal_repack.py engine/metal/tools/stream_experts.py engine/third_party/strata-gguf-py"
+paths="packaging bin strata.py strata_control strata_cli serve requirements.txt requirements-monitor.txt docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md data bench/prompts/standard-v1 setup.py ref/load.py CMakeLists.txt"
 if git rev-parse --git-dir >/dev/null 2>&1; then
   # shellcheck disable=SC2086
-  { git ls-files -z -- $paths ':(glob)terminal/tools/**/*.py'; } | tar --null -T - -cf - | tar -xf - -C "$ctx/terminal-src"
+  { git ls-files -z -- $paths ':(glob)tools/*.py'; } | tar --null -T - -cf - | tar -xf - -C "$ctx/terminal-src"
 else
-  tools_py=$(find terminal/tools -name '*.py')          # nested too
   # shellcheck disable=SC2086
-  tar -cf - --exclude='__pycache__' $paths $tools_py | tar -xf - -C "$ctx/terminal-src"
+  tar -cf - --exclude='__pycache__' $paths tools/*.py | tar -xf - -C "$ctx/terminal-src"
 fi
 
 # 2. the engine package(s): hard-linked when on the same file system (no second copy of GBs), copied otherwise
@@ -92,25 +83,6 @@ for e in $engines; do
   if [ -n "$entry" ] && [ -f "$dest/$entry" ] && [ ! -x "$dest/$entry" ]; then
     echo "note: $entry in $e is not executable; making it executable in the image copy"
     cp --remove-destination "$e/$entry" "$dest/$entry" && chmod 0755 "$dest/$entry"
-  fi
-done
-
-# 2b. optional shape engine package(s) (e.g. strata-hy4 -> /opt/strata/components/shapes/hy4/engine/<pkg>)
-for se in $shape_engines; do
-  case "$se" in
-    *:*) shape=${se%%:*}; sdir=${se#*:} ;;
-    *) sdir=$se; shape=$(sed -n 's/.*"shape": *"\([^"]*\)".*/\1/p' "$sdir/engine-component.json" | head -1) ;;
-  esac
-  [ -n "$shape" ] || { echo "build.sh: --shape-engine $se has no shape name" >&2; exit 2; }
-  [ -f "$sdir/engine-component.json" ] || { echo "build.sh: $sdir has no engine-component.json" >&2; exit 2; }
-  mkdir -p "$ctx/shapes/$shape/engine"
-  sdest="$ctx/shapes/$shape/engine/$(basename "$sdir")"
-  rm -rf "$sdest"
-  cp -al "$sdir" "$sdest" 2>/dev/null || { rm -rf "$sdest"; cp -a "$sdir" "$sdest"; }
-  sentry=$(sed -n 's/.*"entrypoint": *"\([^"]*\)".*/\1/p' "$sdest/engine-component.json" | head -1)
-  if [ -n "$sentry" ] && [ -f "$sdest/$sentry" ] && [ ! -x "$sdest/$sentry" ]; then
-    echo "note: $sentry in $sdir is not executable; making it executable in the image copy"
-    cp --remove-destination "$sdir/$sentry" "$sdest/$sentry" && chmod 0755 "$sdest/$sentry"
   fi
 done
 
