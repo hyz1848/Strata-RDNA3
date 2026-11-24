@@ -13585,6 +13585,7 @@ int main(int argc, char** argv) {
         }
         bool tp_state_tp = false;
         auto tp_to = [&](bool want, int64_t cells, std::string& e) -> bool {
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: tp_to want %d have %d cells %lld\n", (int) want, (int) tp_state_tp, (long long) cells);
             if (!tp_on || tp_state_tp == want) return true;
             strata::core::SessionState* sst[2] = {&ss, &stages[0]->ss};
             const int sdev[2] = {0, stages[0]->dev};

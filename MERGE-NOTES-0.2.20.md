@@ -195,3 +195,20 @@ so it is not the device plan either.  Remaining suspects, in order:
 
 `set_sampling`/`set_logit_bias` do forward through `next_` (verify.hpp:150,153), so the
 sampling settings are not the cause.
+
+### TP: handover works, first window right, later windows diverge (2026-11-24, latest)
+
+Flow of a 120-token GEN, TP on, spec 4 (traced):
+- Prefill reads the prompt into the STAGE sessions; `tp_to(true, cells=119)` moves it to the pair;
+  the first window `run_tp T 1 pos 119` yields 198 - the SAME token as layer-split (correct).
+- Later windows `T 4 pos 120/121/...` yield 487, 1167, 62 (layer-split gives 9707, 9707, ...),
+  and a second process gives other tokens (48,48,48,48 earlier): nondeterministic across runs,
+  deterministic within one run for the 2-token case.
+- With `--spec 2` the FIRST token already differs (487 vs 198 for spec 4) - so the draft count
+  changes the prefill/reading path and the resulting state.
+
+Prime suspect: `tp_state_move(..., cells, ...)` cell count. We pass `p` (the window's start
+position), fork passed the number of cells consumed after the prompt (prompt length).  With
+`cells = p` the last prompt cell (119) is not copied and the windows read an unwritten cell;
+prefill length/chunking then decides which garbage the first pick sees, explaining the spec-4
+vs spec-2 difference.  Next: pass `p + 1` (or the fork's `at`) and A/B the first two tokens.
