@@ -405,3 +405,20 @@ in flight on the same verifier.
 Next: dump `trace_ev` on this path (batch_poll has no trace_dump on the timeout branch;
 add one before `release_gpu_waits`), and check `batch_serve`'s per-row counts for a
 second window while one is in flight (the ring is per verifier, not per group).
+
+### pmtp 2-slot deadlock: the dump points at stage 1, layer 27, 5 rows (2026-11-24)
+
+`STRATA_BATCH_TRACE_DUMP=1`, 4x8192, 2 slots/group:
+```
+batch trace dump: lb 24 le 48 b_k 3 b_steps 24 seq 3 served 3 last_t 5 running 1
+```
+Stage 1's window served only 3 of its 24 steps: the GPU never rings step 4 = **layer 27**
+(the 4th layer of stage 1).  `last_t 5` - the window was launched with **5 rows**, not the
+6 the group layout assumes (one slot had only 2 drafts that round).  So the failure is the
+mixed row count: a pmtp window of the group's rows with S=5 while something downstream
+(row tables / QSA selection / expert plan per row, indexed by the group's fixed
+pmtp_group_cap=6 or by pm_group_rows) waits for row 5.
+
+Next: launch stage 1 with the group's rows padded to pmtp_group_cap (pad rows carry an
+inactive slot's state, as the plain batch windows do), or make the per-row tables follow
+the actual S for pmtp; then layer 27 should ring.
