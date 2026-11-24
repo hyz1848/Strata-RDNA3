@@ -239,3 +239,14 @@ difference - yet GEN with 2 tokens is wrong in our build and right in the fork, 
 move-back is probably not the whole story either.
 Next: add the move-back at the request's end (fork: 19508, `to = consumed + S + 8`) and
 re-run the 2-token and 120-token GEN back to back.
+
+### TP: 0.1.66 calls native_mmvq_il directly in the shared expert (2026-11-24)
+
+Found one source-level TP hazard: 0.1.66's `shared_expert.cu` calls `native_mmvq_il`
+unconditionally (it ignores `STRATA_MMVQ_IL`), and that interleaved kernel was the first
+confirmed-wrong path.  Restored `ours`' `shared_expert.cu` (plain `native_mmvq_pair`).
+`solve` still nondeterministic across processes (198,198,271,26 vs 17,16,24,13), so this
+was not the whole bug.  `native_head.cpp`, `dflash2.cpp` and `verify.cpp` also call
+`native_mmvq_il`; verify's calls honor `g_mmvq_il()` (now forced 0 for TP), the other two
+need the same treatment.
+Also added the fork's move-back after a request (no change to the tokens).

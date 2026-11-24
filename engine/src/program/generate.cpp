@@ -23853,6 +23853,11 @@ int main(int argc, char** argv) {
                 std::snprintf(read_txt, sizeof(read_txt), "%lld of %lld", (long long) read_n, (long long) fresh);
             else
                 std::snprintf(read_txt, sizeof(read_txt), "%lld", (long long) fresh);
+            if (tp_on) {   // TP: the state goes back to the stage sessions when the request ends (as the fork did)
+                std::string tp_err;
+                if (!tp_to(false, (int64_t) n + (int64_t) produced_n + 8, tp_err))
+                    std::fprintf(stderr, "strata serve: tensor parallel: the state move back failed: %s\n", tp_err.c_str());
+            }
             std::fprintf(stderr, "strata serve: prompt %lld tokens = %lld reused + %s read in %.0f ms (%.1f tok/s), "
                                  "%lld generated in %.0f ms (%.1f tok/s), drafts accepted %lld of %lld, %zu checkpoints%s\n",
                          (long long) n, (long long) resume, read_txt, prompt_ms,
