@@ -77,3 +77,24 @@ Port order (ours -> 0.1.66):
 5. Acceptance: `--tensor-parallel 2` (batch 0), solo 1K/6.5K decode 134-150, 4 concurrent
    with `"parallel": 1` (queued) aggregate ~76, or TP beside batch if PR#15's route is
    taken; the target is decode aggregate >= 194 at 4 concurrent.
+
+### Torch-2 status of the TP port (do not redo)
+
+- `baba3bba3` tp kernels; `e55d737f8` 0.1.66 Verifier = fork TP verify (builds);
+  `c5d034156` `--tensor-parallel [1|2]` parsed.
+- Remaining: generate/prefill run wiring. 0.1.66 replaced ours' `ss`/`wt`/`stages[0]`
+  locals with `GpuStage { dev, wt, head, ss, ver, ver_b, sp, ... }` (generate.cpp:1714),
+  and the decode loop constructs a local `Verifier ver` at :13150 (serve path :24397).
+  Map ours -> 0.1.66:
+  - ours `ss` (main session) -> the text stage's `GpuStage::ss`; ours `wt` -> `GpuStage::wt`
+  - ours `stages[0]->ss/wt/head/stream` -> the second `GpuStage`
+  - ours `Prefill sp` -> each stage's `sp` (Prefill::set_stage already splits layers)
+  - ours' TP setup block (generate.cpp ours 7058-7300: tp_geometry/session_init per
+    card, PleRun twice, TpWeights, head half, TpLink, set_tp/set_tp_head_split) inserts
+    after stage sessions init in 0.1.66 (after generate.cpp:7672 session_init) and before
+    the expert caches take VRAM.
+  - ours' handover/loop hooks: 12427 set_tp, 12431 set_tp_head_split, 12467 tp_to,
+    12514 tp_state_move, plus the prefill TP branch 18360/18518; port into the 0.1.66
+    loop's window call sites (search `ver.run(` / `batch_launch`).
+  - prefill: ours' run_tp/tp_state_move in src/prefill/prefill.cpp -> 0.1.66 Prefill.
+- Then the old fork TP acceptance: `--tensor-parallel 2`, solo decode 134-150 at 1K/6.5K.
