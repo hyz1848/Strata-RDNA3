@@ -260,3 +260,19 @@ is why every request depends on `tp_state_move` and why the numbers are fragile.
 `Prefill::run_tp` (ours' `src/prefill/prefill.cpp`, `tp_state_move`/`tp_y16_pack` already
 in the tree) is the next real step; then re-measure solo decode (fork: 134-150 tok/s) and
 compare with the layer split before deciding anything about concurrency.
+
+### TP: the contradiction to resolve next (2026-11-24)
+
+- Prompt read through Prefill (120-token GEN): first T=1 window matched the layer split
+  (198) and the following T=4 windows gave 9707 - i.e. commit + multi-row windows worked.
+- Prompt read through windows (2-token GEN): T=3 window then T=1 -> wrong (15,11,220),
+  with `STRATA_MMVQ_IL=0` set explicitly.
+- Chat (860-token prompt, so Prefill) -> garbage, against the first item.
+- Same-engine non-TP runs are identical across processes; TP differs across processes ->
+  some buffer read before write.
+
+Instrumentation to add (small): after the prompt read, dump a few residual rows on the
+pair AND on the stage sessions (they should match the non-TP build); and dump the T=1
+window's logits top-5 from the head card.  That tells whether the state diverges at the
+read or the head/pick.  `STRATA_TP_HEAD_CHECK` only covers the (unported) head split, so
+it does not help yet.
