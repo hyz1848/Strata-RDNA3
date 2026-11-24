@@ -123,3 +123,18 @@ Port order (ours -> 0.1.66):
   flag word (`h_ple_flag_`, written try_run_tp: `tp_epoch_ + 1`) to see which ring/hand-off spins.
 - Repro config: /opt/strata-merge/test-tp1.json (`--draft mtp`, drafting=mtp, parallel 1,
   STRATA_MTP_KEEP=1, STRATA_STAGE_TRIM=0, max-context 65536), start with /tmp/start_tp1.sh.
+
+### TP hang root-cause direction (2026-11-24, last)
+
+The first window deadlocks before the GPU rings layer 0 (`serve_rings` waits `*seq`,
+nothing advances; prompt read then cancels after 35 s).  Both graphs are captured and
+launched, both ranks run the same exchange sequence at capture.  A/B `STRATA_TP_INBOX=vram`
+changes nothing.
+
+This points at the compute kernels, not the wiring: the fork's `kernels.cu` had TP hooks
+(the out-projection partial sums that publish at each layer and the expert owner's send /
+the other card's receive) and the merged tree took 0.1.66's `kernels.cu`, which has no TP
+code.  The exchange kernels enqueued by verify run, but the layer's compute never reaches
+the doorbell.  Next: diff `ours:src/kernels/cuda/kernels.cu` against the tree's, port the
+TP hooks (grep `tp_` / `tp_xchg` partners: the dense out-proj, the MoE owner post, the
+shared-expert split), then rerun `test-tp1.json`.

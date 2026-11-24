@@ -3668,7 +3668,9 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
     if (!pre && ar_on() && !test_stall && (early_ple_flag_mode() == 1 || (early_ple_flag_mode() == 2 && !graph_launched))) {
         if (do_ple) {
             const Clock::time_point tp = Clock::now();
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather start rank %d T %d\n", tpl_.rank, T);
             if (!ss.ple.table->gather_batch(ple_rows, (size_t) T, h_ple_, err)) return false;
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather done rank %d\n", tpl_.rank);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             strata_store_fence();
             ms_host += ms_since(tp);
@@ -3782,7 +3784,9 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
             // up before the launch (early_ple_flag_mode)
         } else if (do_ple) {
             const Clock::time_point tp = Clock::now();
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather start rank %d T %d\n", tpl_.rank, T);
             if (!ss.ple.table->gather_batch(ple_rows, (size_t) T, h_ple_, err)) return false;
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather done rank %d\n", tpl_.rank);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             strata_store_fence();
             *flag = 1;
@@ -3799,6 +3803,7 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
         auto last_flush = a;
         uint32_t spins = 0;
         progress_at("verify window: waiting for the GPU to reach layer", l);
+        if (std::getenv("STRATA_TP_TRACE")) { static int dbg = 0; if (dbg < 12) { ++dbg; std::fprintf(stderr, "tp trace: ring wait rank %d layer %lld seq %u want %u\n", tpl_.rank, (long long) l, (unsigned) *seq, (unsigned) want); } }
         while (*seq < want) {
             strata_cpu_pause();
             if ((++spins & 1023u) != 0) continue;
@@ -3885,7 +3890,9 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
         // MtpDrafter::draft and Layer 0's attention + router + expert execution!
         if (k == 0 && do_ple) {
             const Clock::time_point tp = Clock::now();
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather start rank %d T %d\n", tpl_.rank, T);
             if (!ss.ple.table->gather_batch(ple_rows, (size_t) T, h_ple_, err)) return false;
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather done rank %d\n", tpl_.rank);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             strata_store_fence();
             ms_host += ms_since(tp);
@@ -4080,6 +4087,8 @@ void Verifier::pcie_balance_window(int64_t steps, int G) {
 // ones), step for step; see run() for the words.  (The tensor-parallel loop's; run() keeps its own, overlapped-split aware)
 bool Verifier::serve_rings(int T, PoolMultiFn pool, void* user, bool do_ple, const uint32_t* ple_rows, Verifier* ple_peer,
                            std::string& err) {
+    static const bool tp_tr = std::getenv("STRATA_TP_TRACE") != nullptr;
+    if (tp_tr) std::fprintf(stderr, "tp trace: serve_rings enter rank %d T %d ple %d\n", tpl_.rank, T, (int) do_ple);
     using namespace strata::kernels;
     const OnDevice on_device(device_);
     const ModelGeometry& g = *g_;
@@ -4104,7 +4113,9 @@ bool Verifier::serve_rings(int T, PoolMultiFn pool, void* user, bool do_ple, con
     if (ar_on() && !test_stall) {
         if (do_ple) {
             const Clock::time_point tp = Clock::now();
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather start rank %d T %d\n", tpl_.rank, T);
             if (!ss.ple.table->gather_batch(ple_rows, (size_t) T, h_ple_, err)) return false;
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather done rank %d\n", tpl_.rank);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             _mm_sfence();
             if (ple_peer != nullptr) tp_ple_ready(ple_peer);
@@ -4188,7 +4199,9 @@ bool Verifier::serve_rings(int T, PoolMultiFn pool, void* user, bool do_ple, con
         // MtpDrafter::draft and Layer 0's attention + router + expert execution!
         if (k == 0 && do_ple) {
             const Clock::time_point tp = Clock::now();
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather start rank %d T %d\n", tpl_.rank, T);
             if (!ss.ple.table->gather_batch(ple_rows, (size_t) T, h_ple_, err)) return false;
+            if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: gather done rank %d\n", tpl_.rank);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             _mm_sfence();
             if (ple_peer != nullptr) tp_ple_ready(ple_peer);
@@ -4205,6 +4218,7 @@ bool Verifier::serve_rings(int T, PoolMultiFn pool, void* user, bool do_ple, con
 // run()'s tail on the stage with the head: a sampled or penalized request's host-side sampling, the picks, the
 // non-finite check.  The window's graph has finished (synced) by now.
 bool Verifier::finish_head(int T, const int32_t* tokens, int64_t pos0, int32_t* out, std::string& err) {
+    if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: finish_head rank %d T %d\n", tpl_.rank, T);
     using namespace strata::kernels;
     static const bool hchk = std::getenv("STRATA_TP_HEAD_CHECK") != nullptr;
     if (hchk && tp_ && tp_head_ && tp_head_row0_ > 0 && h_hchk_ != nullptr) {   // the split pick against the full one
