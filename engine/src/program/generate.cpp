@@ -7727,7 +7727,7 @@ int main(int argc, char** argv) {
     // TP: the multi-row interleaved MMVQ path is not half-width aware (T >= 2 windows diverged); T = 1 is fine
     if (o.tensor_parallel == 1 && std::getenv("STRATA_MMVQ_IL") == nullptr) setenv("STRATA_MMVQ_IL", "0", 1);
     const bool tp_on = o.tensor_parallel == 1 && multi_gpu && stages.size() == 1 && !split_same && o.batch == 0 &&
-                       o.peer_device < 0 && !o.mtp.empty() && o.spec >= 2;   // 0.1.66 merge: mode 1 only
+                       o.peer_device < 0 && o.spec >= 1;   // 0.1.66 merge: mode 1; spec 1 allowed to A/B the single-row window
     const bool tp2 = false;   // 0.1.66 merge: mode 2 (experts by id) not ported yet   // experts by id: two residency tables (host_res, host_res1)
     if (o.tensor_parallel && !tp_on)
         std::fprintf(stderr, "strata generate: tp diag: multi_gpu=%d stages=%zu split_same=%d batch=%d peer=%d mtp=%d spec=%d\n",

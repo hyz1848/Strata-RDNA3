@@ -226,3 +226,16 @@ vs spec-2 difference.  Next: pass `p + 1` (or the fork's `at`) and A/B the first
   `h_ple_prev` history in `tp_ss`), or the state move's cell count for the last prompt
   cell; both are read-before-write races that depend on prior VRAM/session content,
   which matches "sometimes right, sometimes not, across processes".
+
+### TP: fork vs merged hand-over trace (2026-11-24, latest)
+
+The working fork binary, `STRATA_TP_TIMING=1`, 120-token GEN: "state to the TP sessions
+(119 cells)" - the SAME count we pass - then the correct tokens, then "state back to the
+stages (137 cells)" at the end of the request.  So:
+- the cells count is not the bug;
+- the fork always moves the state BACK to the stage sessions after a request, we never do.
+That leaves the stage sessions stale for the next prefill and, for the first request, no
+difference - yet GEN with 2 tokens is wrong in our build and right in the fork, so the
+move-back is probably not the whole story either.
+Next: add the move-back at the request's end (fork: 19508, `to = consumed + S + 8`) and
+re-run the 2-token and 120-token GEN back to back.
