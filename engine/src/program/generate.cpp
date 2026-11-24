@@ -13574,6 +13574,14 @@ int main(int argc, char** argv) {
             }
             std::fprintf(stderr, "strata serve: tensor parallel: two half-model verifiers (CUDA%d + CUDA%d)\n",
                          tp_dev[0], tp_dev[1]);
+            if (use_mtp) {   // the drafter lives with the head (card 1): bind it to that card's table and rows
+                const strata::core::OnDevice on1(tp_dev[1]);
+                if (!mtp.bind(tp_w[1].table(), gs.head.loaded() ? &gs.head : nullptr, tp_peer_ver.final_R_all(), err)) {
+                    std::fprintf(stderr, "strata serve: --tensor-parallel: the drafter: %s\n", err.c_str());
+                    return 1;
+                }
+                mtp.set_source_R(ver.final_R_all());
+            }
         }
         bool tp_state_tp = false;
         auto tp_to = [&](bool want, int64_t cells, std::string& e) -> bool {
@@ -13592,7 +13600,7 @@ int main(int argc, char** argv) {
         };
         if (!tp_on && (!ver.init(wt, g, ss, vh, native_head.loaded() || prefill_head_alias_bound ? &native_head : nullptr,
                       batch_max_t(), err) ||
-            (use_mtp && !prefill_head_alias_bound && !mtp.bind(last_st && !mtp_first ? last_st->wt : wt, last_st ? &last_st->head : &native_head,
+            (use_mtp && !prefill_head_alias_bound && !tp_on && !mtp.bind(last_st && !mtp_first ? last_st->wt : wt, last_st ? &last_st->head : &native_head,
                                   pipe ? pl_mtp_R : ver.final_R_all(), err)))) {
             std::fprintf(stderr, "strata serve: %s\n", err.c_str());
             return 1;
