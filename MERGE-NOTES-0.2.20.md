@@ -422,3 +422,20 @@ pmtp_group_cap=6 or by pm_group_rows) waits for row 5.
 Next: launch stage 1 with the group's rows padded to pmtp_group_cap (pad rows carry an
 inactive slot's state, as the plain batch windows do), or make the per-row tables follow
 the actual S for pmtp; then layer 27 should ring.
+
+### pmtp 2-slot: BOTH stages are stuck in kernels (2026-11-24)
+
+Two reports from the same probe:
+- timeout dump on stage 1: `lb 24 le 48 b_k 3 b_steps 24 seq 3 served 3 last_t 5` (3 of 24).
+- stall report: a stage-0 window `6 tokens at pos 7640, host at layer step 24; served 24,
+  plan (A) 24, copies (B) 24` - all its doorbells served, graph still not finished.
+So it is not a flag wait on either side: one window sits in the hand-off/commit tail on
+stage 0 while the other sits at layer 27 on stage 1.  The S=5-vs-6 row count stays the
+prime suspect (the stage-1 graph is the 5-row one; the stage-0 graph is the 6-row one).
+
+Padding active rows is NOT safe (they are committed), so the next step is to make every
+per-window table follow the actual S: check `capture_deferred`/`dcommit_bm_` key
+(`bkey(rows,S,hbase)`), `set_plan_slot(0)`/`sink_` sizing (`cap`, `plan_i32_`) and the
+commit replay `pm_all_kept` for the S=5 launch.  Also try the same repro with
+`STRATA_SLOT_READ_MAX=0`/no lookup to see whether just the draft *count* varies (S=5) or
+the window always launches short.
