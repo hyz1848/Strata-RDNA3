@@ -138,3 +138,17 @@ code.  The exchange kernels enqueued by verify run, but the layer's compute neve
 the doorbell.  Next: diff `ours:src/kernels/cuda/kernels.cu` against the tree's, port the
 TP hooks (grep `tp_` / `tp_xchg` partners: the dense out-proj, the MoE owner post, the
 shared-expert split), then rerun `test-tp1.json`.
+
+### TP: the window now runs (2026-11-24, latest)
+
+- Big fix: `Verifier::init` reads `cudaGetDevice()`; the peer was init'ed while CUDA0 was
+  current, so both graphs lived on card 0.  Wrap each init in `OnDevice(tp_dev[r])` (and the
+  per-rank set_tp loop too).
+- After that the 7-token window COMPLETES: both serve_rings, finish_head, picks.  The
+  process then dies with SIGSEGV (exit -11) right after `finish_head` returns and before the
+  generate-side post-run hook: inside run_tp's tail (`VDBG`, `progress_at("decode")`,
+  `progress_beat`) or in a host thread (watchdog / release_gpu_waits) racing it.
+- Next: run the serve path under gdb (`gdb -batch -ex run -ex bt --args <engine args>
+  --serve`) on the 7-token request, or bisect the three lines of run_tp's tail.  Config:
+  test-tp1.json (drafting mtp, parallel 1, STRATA_MTP_KEEP=1, STRATA_STAGE_TRIM=0,
+  STRATA_TP_TRACE=1), /tmp/start_tp1.sh.

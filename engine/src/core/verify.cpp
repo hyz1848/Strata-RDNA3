@@ -4297,6 +4297,8 @@ bool Verifier::finish_head(int T, const int32_t* tokens, int64_t pos0, int32_t* 
             }
         }
     }
+
+    if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: finish_head done rank %d\n", tpl_.rank);
     return true;
 }
 

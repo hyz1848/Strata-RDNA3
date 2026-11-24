@@ -13539,6 +13539,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             for (int r = 0; r < 2; ++r) {
+                const strata::core::OnDevice on_r(tp_dev[r]);
                 strata::core::Verifier::TpLink link;
                 link.rank = r;
                 for (int par = 0; par < 2; ++par) {
@@ -13564,9 +13565,10 @@ int main(int argc, char** argv) {
             vh1.cache_base = gs.cache.device_slot(0);
             vh1.slot_off = gs.cache.slot_offsets();
             vh1.n_slots = gs.cache.slots();
-            if (!ver.init(tp_w[0].table(), tp_g[0], tp_ss[0], vh, nullptr, batch_max_t(), err) ||
-                !tp_peer_ver.init(tp_w[1].table(), tp_g[1], tp_ss[1], vh1,
-                                  gs.head.loaded() ? &gs.head : nullptr, batch_max_t(), err)) {
+            bool in0 = false, in1 = false;
+            { const strata::core::OnDevice on0(tp_dev[0]); in0 = ver.init(tp_w[0].table(), tp_g[0], tp_ss[0], vh, nullptr, batch_max_t(), err); }
+            if (in0) { const strata::core::OnDevice on1(tp_dev[1]); in1 = tp_peer_ver.init(tp_w[1].table(), tp_g[1], tp_ss[1], vh1, gs.head.loaded() ? &gs.head : nullptr, batch_max_t(), err); }
+            if (!in0 || !in1) {
                 std::fprintf(stderr, "strata serve: --tensor-parallel: %s\n", err.c_str());
                 return 1;
             }
@@ -23065,11 +23067,13 @@ int main(int argc, char** argv) {
                 const auto decode_pool_fn = use_mtp && mtp.prob() ? invariant_win_pool_fn : win_pool_fn;
                 exit_if_gpu_fatal("");   // (the test hook counts windows here)
                 if (tp_on && !tp_to(true, p, err)) { std::printf("ERR %s\n", err.c_str()); return 1; }
+                if (tp_on && std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: decode run T %d pos %lld\n", T, (long long) p);
                 if (!ver.run(T, window.data(), p, decode_pool_fn, win_pool_user, outv.data(), err) || drive.d.failed) {
                     exit_if_gpu_fatal(drive.d.failed && drive.d.fail ? drive.d.fail : err);
                     std::printf("ERR %s\n", drive.d.failed && drive.d.fail ? drive.d.fail : err.c_str());
                     return 1;
                 }
+                if (tp_on && std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: decode run done\n");
                 if (aflipped) apply_pending(true);   // 0.1.43: every layer's copies were waited for in the window; the bookkeeping now
                 // Diagnostics (as in generate): STRATA_DUMP_FIRST_LOGITS=<path> writes the logits of each request's first
                 // window to <path>.<n>, so the prompt paths (a peer card's share, a split) can be compared by KL
