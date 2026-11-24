@@ -20502,7 +20502,7 @@ int main(int argc, char** argv) {
                 // (STRATA_LOGPOS reads every window's logits: the serial loop)
                 // the pipelined prompt read stays two-stage (three or more stages read serially; only the decode overlaps)
                 if (pipe && n_stages == 2 && pl_pw >= 1 && std::getenv("STRATA_LOGPOS") == nullptr) return read_windows_pl(a, b, e);
-                if (tp_on && !tp_to(false, a, e)) return false;
+                if (tp_on && !tp_to(true, a, e)) return false;   // TP windows keep the state on the pair
                 strata::core::progress_at("reading the prompt (verify windows), from token", a);   // #217: not "batched"
                 // every token is committed and the picks are discarded: no head sampling (see set_head_sampling)
                 struct NoHeadSampling {
@@ -20924,6 +20924,7 @@ int main(int argc, char** argv) {
                         segs.push_back(sg);
                         used.push_back(&c);
                     }
+                    if (tp_on && !tp_to(false, lead.pos0, ce)) return false;
                     if (segs.size() < 2) return sp.run(lead.tokens, lead.n, lead.pos0, ce);
                     for (const CoReq* c : used) {
                         park_slot(c->slot);   // the conversation the slot holds, before this read overwrites it
@@ -20969,6 +20970,7 @@ int main(int argc, char** argv) {
                         co_tried = true;
                         run_ok = co_run(q, r, e);
                     } else {
+                        if (tp_on && !tp_to(false, q, e)) return false;
                         run_ok = sp.run(ids.data() + q, r - q, q, e);
                     }
                     if (run_ok && q == 0 && sp.kva_floor() > 0) {   // KVA approximated the start of this prompt: remember which tokens
@@ -21279,6 +21281,7 @@ int main(int argc, char** argv) {
                             conc_thread_cpus();
                             try {   // (an exception leaving a std::thread ends the process: a failed read instead)
                                 if (planned) sp.force_chunk(plan.chunk, plan_single, plan.chunked);
+                                if (tp_on && !tp_to(false, q0, read_err)) return false;
                                 read_ok = sp.run(ids.data() + q0, b0 - q0, q0, read_err);
                             } catch (const std::exception& x) {
                                 read_ok = false;

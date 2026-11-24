@@ -152,3 +152,20 @@ shared-expert split), then rerun `test-tp1.json`.
   --serve`) on the 7-token request, or bisect the three lines of run_tp's tail.  Config:
   test-tp1.json (drafting mtp, parallel 1, STRATA_MTP_KEEP=1, STRATA_STAGE_TRIM=0,
   STRATA_TP_TRACE=1), /tmp/start_tp1.sh.
+
+### TP: runs end-to-end, numerics wrong (2026-11-24, latest)
+
+`2be8697ce` + the handover-hook fix: a request now completes through the TP pair
+(`GEN` returns DONE, ~169 ms for the 16-token window) but the tokens are GARBAGE
+("， the best part of noniss..."), including the verify-window prompt path with no
+Prefill.  So the wiring is right and the *compute* is wrong.
+
+Checks for next session:
+- First-token A/B: same 2-token prompt, TP on vs off (--tensor-parallel 0) - the first
+  pick differs, so it is in the window, not in the state handover.
+- Only `qsa_select.cu` and `verify_kernels.cu` carry `tp_` in `ours`; the merged tree
+  has ours' verify_kernels (all TP kernels) and ours' qsa_select (59 tp_ refs).  The
+  dense/MoE numbers come from verify.cpp + those kernels; compare the tree's
+  `verify.cpp` TP call sites (kVerifyNarrowT paths, `tp_shexp_split`, `tp_gpu_only_`,
+  the out-proj half width) against `ours` one by one - the likely drift is a call that
+  0.1.66 renamed/reshaped.
