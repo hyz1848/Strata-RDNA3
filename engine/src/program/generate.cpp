@@ -13567,10 +13567,26 @@ int main(int argc, char** argv) {
             }
             std::fprintf(stderr, "strata serve: tensor parallel: two half-model verifiers (CUDA%d + CUDA%d)\n",
                          tp_dev[0], tp_dev[1]);
-        } else if (!ver.init(wt, g, ss, vh, native_head.loaded() || prefill_head_alias_bound ? &native_head : nullptr,
+        }
+        bool tp_state_tp = false;
+        auto tp_to = [&](bool want, int64_t cells, std::string& e) -> bool {
+            if (!tp_on || tp_state_tp == want) return true;
+            strata::core::SessionState* sst[2] = {&ss, &stages[0]->ss};
+            const int sdev[2] = {0, stages[0]->dev};
+            const int64_t slb[2] = {0, split_at[0]};
+            strata::core::SessionState* tst[2] = {&tp_ss[0], &tp_ss[1]};
+            for (const int d : {0, stages[0]->dev}) {
+                const strata::core::OnDevice on(d);
+                if (cudaDeviceSynchronize() != cudaSuccess) { e = "tensor parallel: a device sync failed before the state move"; return false; }
+            }
+            if (!strata::core::tp_state_move(g, tp_g, sst, sdev, 2, slb, tst, tp_dev, cells, want, e, 0)) return false;
+            tp_state_tp = want;
+            return true;
+        };
+        if (!tp_on && (!ver.init(wt, g, ss, vh, native_head.loaded() || prefill_head_alias_bound ? &native_head : nullptr,
                       batch_max_t(), err) ||
             (use_mtp && !prefill_head_alias_bound && !mtp.bind(last_st && !mtp_first ? last_st->wt : wt, last_st ? &last_st->head : &native_head,
-                                  pipe ? pl_mtp_R : ver.final_R_all(), err))) {
+                                  pipe ? pl_mtp_R : ver.final_R_all(), err)))) {
             std::fprintf(stderr, "strata serve: %s\n", err.c_str());
             return 1;
         }
@@ -20471,6 +20487,7 @@ int main(int argc, char** argv) {
                 // (STRATA_LOGPOS reads every window's logits: the serial loop)
                 // the pipelined prompt read stays two-stage (three or more stages read serially; only the decode overlaps)
                 if (pipe && n_stages == 2 && pl_pw >= 1 && std::getenv("STRATA_LOGPOS") == nullptr) return read_windows_pl(a, b, e);
+                if (tp_on && !tp_to(false, a, e)) return false;
                 strata::core::progress_at("reading the prompt (verify windows), from token", a);   // #217: not "batched"
                 // every token is committed and the picks are discarded: no head sampling (see set_head_sampling)
                 struct NoHeadSampling {
@@ -23042,6 +23059,7 @@ int main(int argc, char** argv) {
                 else if (strata::spec::mtp_q_applies(use_mtp, req_df2, use_mtp && mtp.prob(), from_sfx, first_window, T_mtp)) ver.set_spec_q(mtp.spec_q(), T_mtp - 1);   // only candidates the MTP drew
                 const auto decode_pool_fn = use_mtp && mtp.prob() ? invariant_win_pool_fn : win_pool_fn;
                 exit_if_gpu_fatal("");   // (the test hook counts windows here)
+                if (tp_on && !tp_to(true, p, err)) { std::printf("ERR %s\n", err.c_str()); return 1; }
                 if (!ver.run(T, window.data(), p, decode_pool_fn, win_pool_user, outv.data(), err) || drive.d.failed) {
                     exit_if_gpu_fatal(drive.d.failed && drive.d.fail ? drive.d.fail : err);
                     std::printf("ERR %s\n", drive.d.failed && drive.d.fail ? drive.d.fail : err.c_str());
