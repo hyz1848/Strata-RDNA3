@@ -255,4 +255,12 @@ void window_ids(int32_t* steps, int n, int window, int32_t* ids, int64_t ids_str
 void window_ids_floor(int32_t* steps, int n, int window, int32_t* ids, int64_t ids_stride, const int32_t* floor_cell,
                       void* stream);
 
+/// TP: the window's first node (epoch_d <- *epoch_h, *cnt <- 0) and the per-layer exchanges.
+void tp_window_begin(uint32_t* epoch_d, unsigned* cnt, const uint32_t* epoch_h, void* stream);
+int tp_exchange_blocks(int64_t n);
+void tp_exchange(float* mine, float* peer_inbox, const float* my_inbox, uint32_t* peer_flag, const uint32_t* my_flag,
+                 const uint32_t* epoch_d, uint32_t k, uint32_t pub, unsigned* cnt, int64_t n, int rank, int mode,
+                 void* stream, bool vram = false);
+void tp_wait_epoch(const uint32_t* flag, const uint32_t* epoch_d, uint32_t k, void* stream);
+
 }  // namespace strata::kernels

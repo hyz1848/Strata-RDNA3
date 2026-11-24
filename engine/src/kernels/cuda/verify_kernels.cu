@@ -2147,4 +2147,116 @@ bool pdl_launch_ok(const void* kernel, cudaStream_t stream) {
 }
 #endif
 
+namespace {
+__global__ void tp_window_begin_kernel(uint32_t* epoch_d, unsigned* cnt, const volatile uint32_t* epoch_h) {
+    *epoch_d = *epoch_h;
+    *cnt = 0u;
+}
+constexpr int kTpThreads = 256;
+// The stores into the peer's inbox are plain stores into mapped host memory followed by a system fence (as the doorbell
+// publish does); the inbox is read with volatile loads (as copy_from_mapped does: fine-grained host memory is not
+// cached, and the volatile keeps the compiler from hoisting them over the wait).  The flag store is volatile and fenced
+// on both sides (#697: on RDNA a plain store can sit in L2 until the stream syncs).
+// [claude] VRAM (STRATA_TP_INBOX=vram): the flag word is in the receiving card's VRAM (uncached) and the inbox fine-grained
+// VRAM there, written by the peer over PCIe: the flag is raised with a system-scope release store and polled with
+// system-scope acquire loads (p2p_pingpong's recipe); the data path is the same.
+template <int MODE, bool VRAM>
+__global__ void __launch_bounds__(kTpThreads) tp_exchange_kernel(float4* __restrict__ mine, float4* peer_inbox,
+                                                                   const volatile float4* my_inbox,
+                                                                   volatile uint32_t* peer_flag,
+                                                                   const volatile uint32_t* my_flag,
+                                                                   const uint32_t* __restrict__ epoch_d, uint32_t k,
+                                                                   uint32_t pub, unsigned* cnt, int rank, int n4) {
+    const uint32_t want = *epoch_d + k;
+    const int stride = gridDim.x * blockDim.x;
+    if (MODE != 2) {
+        for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n4; i += stride) peer_inbox[i] = mine[i];
+        __threadfence_system();
+        __syncthreads();
+        if (threadIdx.x == 0) {
+            const unsigned done = atomicAdd(cnt, 1u) + 1u;
+            if (done == pub) {   // the last block of this exchange to have stored (pub: the card's sends' blocks so far, this one's included)
+                __threadfence_system();
+#if defined(__HIP_PLATFORM_AMD__)
+                if (VRAM) __hip_atomic_store((uint32_t*) peer_flag, want, __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_SYSTEM);
+                else
+#endif
+                *peer_flag = want;
+                __threadfence_system();
+            }
+        }
+    }
+    if (MODE != 0 && MODE != 2) return;
+    if (threadIdx.x == 0) {
+#if defined(__HIP_PLATFORM_AMD__)
+        if (VRAM) { while (__hip_atomic_load((const uint32_t*) my_flag, __ATOMIC_ACQUIRE, __HIP_MEMORY_SCOPE_SYSTEM) < want) strata_spin_pause(); }
+        else
+#endif
+        while (*my_flag < want) strata_spin_pause();
+        __threadfence_system();
+    }
+    __syncthreads();
+    __threadfence_system();   // every wave's acquire (RDNA3: else stale lines of the reused inbox)
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n4; i += stride) {
+        const float4 b = const_cast<const float4*>(my_inbox)[i];
+        if (MODE == 2) { mine[i] = b; continue; }
+        const float4 a = mine[i];
+        float4 r;
+        if (rank == 0) { r.x = a.x + b.x; r.y = a.y + b.y; r.z = a.z + b.z; r.w = a.w + b.w; }
+        else { r.x = b.x + a.x; r.y = b.y + a.y; r.z = b.z + a.z; r.w = b.w + a.w; }
+        mine[i] = r;
+    }
+}
+__global__ void tp_wait_epoch_kernel(const volatile uint32_t* flag, const uint32_t* __restrict__ epoch_d, uint32_t k) {
+    const uint32_t want = *epoch_d + k;
+    while (*flag < want) strata_spin_pause();
+    __threadfence_system();
+}
+}  // namespace
+void tp_window_begin(uint32_t* epoch_d, unsigned* cnt, const uint32_t* epoch_h, void* stream) {
+    tp_window_begin_kernel<<<1, 1, 0, (cudaStream_t) stream>>>(epoch_d, cnt, (const volatile uint32_t*) epoch_h);
+    check("tp_window_begin");
+}
+
+int tp_exchange_blocks(int64_t n) {
+    int blocks = (int) ((n / 4 + kTpThreads - 1) / kTpThreads);
+    if (blocks > 16) blocks = 16;
+    if (blocks < 1) blocks = 1;
+    return blocks;
+}
+
+void tp_exchange(float* mine, float* peer_inbox, const float* my_inbox, uint32_t* peer_flag, const uint32_t* my_flag,
+                 const uint32_t* epoch_d, uint32_t k, uint32_t pub, unsigned* cnt, int64_t n, int rank, int mode,
+                 void* stream, bool vram) {
+    if (mine == nullptr || epoch_d == nullptr || cnt == nullptr || n <= 0 || (n & 3) != 0 || ((uintptr_t) mine & 15) != 0 ||
+        (mode != 2 && (peer_inbox == nullptr || peer_flag == nullptr)) || (mode != 1 && (my_inbox == nullptr || my_flag == nullptr))) {
+        std::fprintf(stderr, "tp_exchange: invalid arguments\n");
+        std::exit(1);
+    }
+    const int n4 = (int) (n / 4);
+    const int blocks = tp_exchange_blocks(n);
+    const dim3 grid((unsigned) blocks), block(kTpThreads);
+    cudaStream_t cs = (cudaStream_t) stream;
+    float4* m4 = (float4*) mine;
+    float4* p4 = (float4*) peer_inbox;
+    const volatile float4* i4 = (const volatile float4*) my_inbox;
+    volatile uint32_t* pf = (volatile uint32_t*) peer_flag;
+    const volatile uint32_t* mf = (const volatile uint32_t*) my_flag;
+    if (vram) {
+        if (mode == 0) tp_exchange_kernel<0, true><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+        else if (mode == 1) tp_exchange_kernel<1, true><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+        else tp_exchange_kernel<2, true><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+    } else {
+        if (mode == 0) tp_exchange_kernel<0, false><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+        else if (mode == 1) tp_exchange_kernel<1, false><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+        else tp_exchange_kernel<2, false><<<grid, block, 0, cs>>>(m4, p4, i4, pf, mf, epoch_d, k, pub, cnt, rank, n4);
+    }
+    check("tp_exchange");
+}
+
+void tp_wait_epoch(const uint32_t* flag, const uint32_t* epoch_d, uint32_t k, void* stream) {
+    tp_wait_epoch_kernel<<<1, 1, 0, (cudaStream_t) stream>>>((const volatile uint32_t*) flag, epoch_d, k);
+    check("tp_wait_epoch");
+}
+
 }  // namespace strata::kernels
