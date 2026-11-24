@@ -1,3 +1,4 @@
+#include "strata/core/tp.hpp"
 #include "strata/core/logit_bias.hpp"
 // src/program/generate.cpp - P2.S6: `strata generate`.
 //
@@ -7722,6 +7723,114 @@ int main(int argc, char** argv) {
                      last ? " and the head" : "", (double) fb / 1073741824.0);
     }
 
+    // ---- TENSOR PARALLEL (fork core/tp.hpp): both cards' sessions at half the heads, sliced weights (port)
+    const bool tp_on = o.tensor_parallel == 1 && multi_gpu && stages.size() == 1 && !split_same && o.batch == 0 &&
+                       o.peer_device < 0 && !o.mtp.empty() && o.spec >= 2;   // 0.1.66 merge: mode 1 only
+    const bool tp2 = false;   // 0.1.66 merge: mode 2 (experts by id) not ported yet   // experts by id: two residency tables (host_res, host_res1)
+    if (o.tensor_parallel && !tp_on)
+        std::fprintf(stderr, "strata generate: --tensor-parallel is off (needs a layer split on two GPUs, --mtp with "
+                             "--spec >= 2, no --batch / --peer-device)\n");
+    strata::core::ModelGeometry tp_g[2];
+    strata::core::SessionState tp_ss[2];
+    int tp_dev[2] = {0, 0};
+    // each card's TP (and DP foreign) session borrows the RoPE table of the stage session on its card: no second and
+    // third 64 MiB copy of the same table (+~50 expert slots a card)
+    auto stage_rope = [&](int dev) -> const strata::core::QsaState* {
+        strata::core::SessionState& S = dev == stages[0]->dev ? stages[0]->ss : ss;
+        if (g.n_qsa_layers() == 0 || S.qsa_states == nullptr || S.qsa_alloc == 0) return nullptr;
+        return &S.qsa_states[S.qsa_primary()];
+    };
+    void* tp_arena[2] = {nullptr, nullptr};
+    if (tp_on) {
+        tp_dev[1] = stages[0]->dev;
+        for (int r = 0; r < 2; ++r) {
+            if (!strata::core::tp_geometry(g, r, 2, tp_g[r], err)) {
+                std::fprintf(stderr, "strata generate: %s\n", err.c_str());
+                return 1;
+            }
+            const strata::core::OnDevice on(tp_dev[r]);
+            void* buf = nullptr;
+            const strata::core::QsaState* rope = stage_rope(tp_dev[r]);
+            uint64_t bytes = strata::core::session_bytes(tp_g[r], o.max_context, K, 0, g.n_layers, rope);
+            if (cudaMalloc(&buf, bytes) != cudaSuccess ||
+                (tp_arena[r] = buf, false) ||
+                strata::core::session_init(tp_g[r], o.max_context, K, buf, tp_ss[r], 0, g.n_layers, rope) == 0) {
+                std::fprintf(stderr, "strata generate: --tensor-parallel: CUDA%d's session (%llu MiB) failed%s\n", tp_dev[r],
+                             (unsigned long long) (bytes >> 20), vram_free_note().c_str());
+                return 1;
+            }
+            strata::core::session_zero(tp_ss[r], tp_g[r], nullptr, r == 0 ? main_cs : (void*) stages[0]->stream);
+            if (cudaDeviceSynchronize() != cudaSuccess) { std::fprintf(stderr, "strata generate: --tensor-parallel: zeroing failed\n"); return 1; }
+            std::fprintf(stderr, "strata generate: tensor parallel: CUDA%d session for every layer at %lld of %lld GDN k-heads and "
+                                 "%lld of %lld kv-heads, %llu MiB\n", tp_dev[r], (long long) tp_g[r].ssm_k_heads, (long long) g.ssm_k_heads,
+                         (long long) tp_g[r].n_head_kv, (long long) g.n_head_kv, (unsigned long long) (bytes >> 20));
+        }
+        if (ss.ple.ready()) {   // both cards run layer 1's PLE block: each session its own run (card 1's from its table)
+            tp_ss[0].ple = ss.ple;
+            tp_ss[0].ple.hist = tp_ss[0].ple_hist;
+            tp_ss[0].ple.prev = tp_ss[0].ple_prev;
+            tp_ss[0].ple.token = &tp_ss[0].ple_token;
+            GpuStage& st0 = *stages[0];
+            const strata::core::OnDevice on(st0.dev);
+            strata::core::PleRun& P = tp_ss[1].ple;
+            P = ss.ple;
+            auto fw = [&](const char* name) { return st0.wt.find(name); };
+            const strata::core::WeightRef *wk = fw("blk.1.ple_key.weight"), *wv = fw("blk.1.ple_value.weight"),
+                                          *wnk = fw("blk.1.ple_norm_key.weight"), *wnq = fw("blk.1.ple_norm_query.weight"),
+                                          *wnc = fw("blk.1.ple_norm_conv.weight"), *wc = fw("blk.1.ple_conv1d.weight");
+            float* emb = nullptr;
+            float* scr = nullptr;
+            if (!wk || !wv || !wnk || !wnq || !wnc || !wc ||
+                cudaMalloc((void**) &emb, (size_t) strata::kernels::NG_N_EMBD * 4) != cudaSuccess ||
+                cudaMalloc((void**) &scr, strata::core::ple_run_scratch_bytes()) != cudaSuccess) {
+                std::fprintf(stderr, "strata generate: --tensor-parallel: CUDA%d's PLE run failed\n", st0.dev);
+                return 1;
+            }
+            P.w = strata::kernels::PleWeights{};
+            if (!wk->quantized()) P.w.key_bf16 = (const uint16_t*) wk->data;
+            else if (wk->data != nullptr) {
+                P.w.key_codes = (const uint8_t*) wk->data;
+                P.w.key_scales = (const float*) ((const uint8_t*) wk->data + wk->codes_bytes);
+            }
+            if (ss.ple.w.key_native_data != nullptr && wk->quantized() && wk->native_data != nullptr) {
+                P.w.key_native_data = wk->native_data;
+                P.w.key_native_type = wk->native_type;
+                P.w.key_native_q8_1 = wk->native_q8_1;
+            }
+            P.w.value_bf16 = (const uint16_t*) wv->data;
+            P.w.norm_key = (const float*) wnk->data;
+            P.w.norm_query = (const float*) wnq->data;
+            P.w.norm_conv = (const float*) wnc->data;
+            P.w.conv1d_f16 = (const uint16_t*) wc->data;
+            P.hist = tp_ss[1].ple_hist;
+            P.prev = tp_ss[1].ple_prev;
+            P.token = &tp_ss[1].ple_token;
+            P.emb_dev = emb;
+            P.scratch = scr;
+            if (!P.ready()) { std::fprintf(stderr, "strata generate: --tensor-parallel: CUDA%d's PLE run is not ready\n", st0.dev); return 1; }
+        }
+    }
+    // the sliced weights now, before the expert caches take the VRAM that is left (the verifiers' buffers come after
+    // the caches, held back by kPipeWindowMib)
+    strata::core::TpWeights tp_w[2];
+    for (int r = 0; tp_on && r < 2; ++r) {
+        const strata::core::OnDevice on(tp_dev[r]);
+        if (!tp_w[r].build(r == 0 ? wt : stages[0]->wt, g, r, 2, o.native_dense_gguf, err)) {
+            std::fprintf(stderr, "strata generate: --tensor-parallel: CUDA%d's weights: %s%s\n", tp_dev[r], err.c_str(),
+                         vram_free_note().c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "strata generate: tensor parallel: CUDA%d holds %.0f MiB of sliced dense weights (%.0f MiB more "
+                             "read in place from the full matrices)\n", tp_dev[r],
+                     (double) tp_w[r].bytes() / 1048576.0, (double) tp_w[r].aliased() / 1048576.0);
+    }
+    // STRATA_TP_HEAD_SPLIT: deferred in the 0.1.66 merge (NativeHead::load_rows is not ported yet)
+    strata::core::NativeHead tp_head_half;
+    int64_t tp_head_row0 = 0;
+    if (tp_on && std::getenv("STRATA_TP_HEAD_SPLIT") != nullptr && std::atoi(std::getenv("STRATA_TP_HEAD_SPLIT")) != 0)
+        std::fprintf(stderr, "strata generate: --tensor-parallel: STRATA_TP_HEAD_SPLIT is not ported yet, off\n");
+    mem_mark("the tensor-parallel sessions and weights");
+
     // --batch: every stage carves o.batch more sessions like its own (same layer range and context), one per
     // slot of the batch windows.  Before the expert cache is sized, so `--expert-cache auto` leaves them room.
     // Recommend, never force: a count the engine cannot run is said and adjusted (or batching left off) - the
@@ -13148,6 +13257,8 @@ int main(int argc, char** argv) {
             return 1;
         }
         strata::core::Verifier ver;
+        strata::core::Verifier tp_peer_ver;
+        strata::core::TpPages tp_pages;
         strata::core::VerifyHits vh;
         vh.d_res = thits.d_res;
         // STRATA_ROUTE_RESIDENT_MTP=1 (EXPERIMENTAL, with STRATA_ROUTE_RESIDENT=<margin>; changes the output): the MTP
@@ -13418,7 +13529,45 @@ int main(int argc, char** argv) {
         if (use_df2) ver.set_taps(df2.tap_layers());
         if (batch_df2) ver.set_batch_taps(true);
 #endif
-        if (!ver.init(wt, g, ss, vh, native_head.loaded() || prefill_head_alias_bound ? &native_head : nullptr,
+        if (tp_on) {   // TENSOR PARALLEL: both halves of the window, the pair exchanging through pinned pages
+            GpuStage& gs = *stages[0];
+            if (!tp_pages.alloc(tp_dev[0], tp_dev[1], (int64_t) strata::kernels::kVerifyMaxT * g.n_embd, err)) {
+                std::fprintf(stderr, "strata serve: --tensor-parallel: %s\n", err.c_str());
+                return 1;
+            }
+            for (int r = 0; r < 2; ++r) {
+                strata::core::Verifier::TpLink link;
+                link.rank = r;
+                for (int par = 0; par < 2; ++par) {
+                    link.inbox[par] = tp_pages.inbox_d[r][par][r];
+                    link.peer_inbox[par] = tp_pages.inbox_d[1 - r][par][r];
+                }
+                link.flag = tp_pages.flag_d[r][r];
+                link.flag_h = tp_pages.flag_h[r];
+                link.flag_dev = tp_pages.vram ? tp_dev[r] : -1;
+                link.peer_flag = tp_pages.flag_d[1 - r][r];
+                strata::core::Verifier& V = r == 0 ? ver : tp_peer_ver;
+                strata::core::Verifier& P = r == 0 ? tp_peer_ver : ver;
+                const int64_t own_lb = r == 0 ? 0 : split_at[0], own_le = r == 0 ? split_at[0] : g.n_layers;
+                if (!V.set_tp(link, own_lb, own_le, r == 1, &P, err, o.tensor_parallel)) {
+                    std::fprintf(stderr, "strata serve: --tensor-parallel: %s\n", err.c_str());
+                    return 1;
+                }
+            }
+            strata::core::VerifyHits vh1 = vh;
+            vh1.d_res = gs.d_res;
+            vh1.cache_base = gs.cache.device_slot(0);
+            vh1.slot_off = gs.cache.slot_offsets();
+            vh1.n_slots = gs.cache.slots();
+            if (!ver.init(tp_w[0].table(), tp_g[0], tp_ss[0], vh, nullptr, batch_max_t(), err) ||
+                !tp_peer_ver.init(tp_w[1].table(), tp_g[1], tp_ss[1], vh1,
+                                  gs.head.loaded() ? &gs.head : nullptr, batch_max_t(), err)) {
+                std::fprintf(stderr, "strata serve: --tensor-parallel: %s\n", err.c_str());
+                return 1;
+            }
+            std::fprintf(stderr, "strata serve: tensor parallel: two half-model verifiers (CUDA%d + CUDA%d)\n",
+                         tp_dev[0], tp_dev[1]);
+        } else if (!ver.init(wt, g, ss, vh, native_head.loaded() || prefill_head_alias_bound ? &native_head : nullptr,
                       batch_max_t(), err) ||
             (use_mtp && !prefill_head_alias_bound && !mtp.bind(last_st && !mtp_first ? last_st->wt : wt, last_st ? &last_st->head : &native_head,
                                   pipe ? pl_mtp_R : ver.final_R_all(), err))) {
