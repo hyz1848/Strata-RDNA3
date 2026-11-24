@@ -13557,6 +13557,8 @@ int main(int argc, char** argv) {
                     return 1;
                 }
             }
+            ver.set_stage(0, g.n_layers, nullptr, nullptr);   // TP: every layer on both cards
+            tp_peer_ver.set_stage(0, g.n_layers, nullptr, nullptr);
             strata::core::VerifyHits vh1 = vh;
             vh1.d_res = gs.d_res;
             vh1.cache_base = gs.cache.device_slot(0);

@@ -1554,6 +1554,8 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         ++tp_k;
         if (mode != 2) tp_pub += (uint32_t) tp_exchange_blocks(n);   // the blocks this card's sends have published
         const int par = (int) (tp_k & 1u);
+        static const bool tp_trace = std::getenv("STRATA_TP_TRACE") != nullptr;
+        if (tp_trace && (tp_k <= 6 || tp_k % 16 == 0)) std::fprintf(stderr, "tp trace: rank %d k %u mode %d n %lld pub %u\n", tpl_.rank, tp_k, mode, (long long) n, tp_pub);
         tp_exchange(buf, tpl_.peer_inbox[par], tpl_.inbox[par], tpl_.peer_flag, tpl_.flag, tp_epoch_d_, tp_k, tp_pub,
                     tp_cnt_, n, tpl_.rank, mode, cs, tpl_.flag_h == nullptr && tpl_.flag_dev >= 0);
     };
@@ -4333,6 +4335,9 @@ bool Verifier::run_tp(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn po
         if (pos0 + T > x->ss_->qsa_states[x->ss_->qsa_primary()].max_cells) { err = "verify: the window runs past the context"; return false; }
     }
     if (tp_head_ == tp_peer_->tp_head_) { err = "verify: exactly one tensor-parallel card runs the head"; return false; }
+    if (std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: run_tp T %d pos %lld | rank0 lb %lld le %lld layers %lld max_t %d | rank1 lb %lld le %lld layers %lld max_t %d\n",
+        T, (long long) pos0, (long long) this->lb_, (long long) this->le_, (long long) g_->n_layers, max_t_,
+        (long long) tp_peer_->lb_, (long long) tp_peer_->le_, (long long) tp_peer_->g_->n_layers, tp_peer_->max_t_);
     for (Verifier* x : v) {
         const OnDevice on(x->device_);
         x->refresh_ar();

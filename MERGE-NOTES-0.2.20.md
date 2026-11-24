@@ -110,3 +110,16 @@ Port order (ours -> 0.1.66):
   `Verifier::run`'s TP prologue against ours' generate-side requirements (`tp_pre_join`,
   the PLE flag at verify.cpp:1631, tp_pages flag init) - the pair is stuck on the first
   exchange.  A/B: STRATA_TP_INBOX=vram, and print tp_k/tp_pub at the first layer.
+
+### TP debug 2026-11-24 (later): progress
+
+- fix: the pair's verifiers must run EVERY layer (`ver.set_stage(0, g.n_layers, nullptr, nullptr)`
+  before init); rank 0 had kept [0, 24) and the two cards' exchange counts diverged.  After the fix
+  both ranks finish all 96 exchanges of the 7-token prompt with the same pub total (1152), so the
+  layer loop and the exchange protocol are correct.
+- The window then still times out: the stall is after the exchanges, inside `serve_rings` or
+  `finish_head` (verify.cpp run_tp: launch -> serve_rings(first) -> serve_rings(second) -> sync ->
+  finish_head).  Next: trace each card's serve_rings entry/exit (STRATA_TP_TRACE) and the PLE
+  flag word (`h_ple_flag_`, written try_run_tp: `tp_epoch_ + 1`) to see which ring/hand-off spins.
+- Repro config: /opt/strata-merge/test-tp1.json (`--draft mtp`, drafting=mtp, parallel 1,
+  STRATA_MTP_KEEP=1, STRATA_STAGE_TRIM=0, max-context 65536), start with /tmp/start_tp1.sh.
