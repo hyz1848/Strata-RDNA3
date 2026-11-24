@@ -7728,6 +7728,9 @@ int main(int argc, char** argv) {
                        o.peer_device < 0 && !o.mtp.empty() && o.spec >= 2;   // 0.1.66 merge: mode 1 only
     const bool tp2 = false;   // 0.1.66 merge: mode 2 (experts by id) not ported yet   // experts by id: two residency tables (host_res, host_res1)
     if (o.tensor_parallel && !tp_on)
+        std::fprintf(stderr, "strata generate: tp diag: multi_gpu=%d stages=%zu split_same=%d batch=%d peer=%d mtp=%d spec=%d\n",
+                     (int) multi_gpu, stages.size(), (int) split_same, o.batch, o.peer_device, (int) !o.mtp.empty(), o.spec);
+    if (o.tensor_parallel && !tp_on)
         std::fprintf(stderr, "strata generate: --tensor-parallel is off (needs a layer split on two GPUs, --mtp with "
                              "--spec >= 2, no --batch / --peer-device)\n");
     strata::core::ModelGeometry tp_g[2];

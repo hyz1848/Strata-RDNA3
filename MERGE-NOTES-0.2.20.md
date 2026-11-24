@@ -98,3 +98,15 @@ Port order (ours -> 0.1.66):
     loop's window call sites (search `ver.run(` / `batch_launch`).
   - prefill: ours' run_tp/tp_state_move in src/prefill/prefill.cpp -> 0.1.66 Prefill.
 - Then the old fork TP acceptance: `--tensor-parallel 2`, solo decode 134-150 at 1K/6.5K.
+
+### TP runtime status (2026-11-24)
+
+- `4be1c0b54` sessions+weights+verifier pair; `f...` tp_to hooks; builds and STARTS:
+  `strata serve ... --tensor-parallel 1 --draft mtp` (needs `STRATA_MTP_KEEP=1` so the
+  drafter survives the memory decision, and `STRATA_STAGE_TRIM=0` so both arenas hold
+  every layer).
+- It then HANGS in the first window: `strata verify: timed out at layer 0` (both card
+  verifiers entered run; rank 0 drives the pair as in the fork).  Next: compare
+  `Verifier::run`'s TP prologue against ours' generate-side requirements (`tp_pre_join`,
+  the PLE flag at verify.cpp:1631, tp_pages flag init) - the pair is stuck on the first
+  exchange.  A/B: STRATA_TP_INBOX=vram, and print tp_k/tp_pub at the first layer.
