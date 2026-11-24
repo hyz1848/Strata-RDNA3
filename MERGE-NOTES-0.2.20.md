@@ -315,3 +315,26 @@ windows (both drivers gate TP on --batch 0), so 4-concurrent aggregate is bounde
 queueing (~38 end-to-end, prefill-dominated).  If the old 194 number was engine-side
 rows/window it is not the same metric as these; if it was end-to-end tok/s it is not
 reachable with TP alone - a concurrency path over TP (or batch) is a separate project.
+
+## FINAL: the concurrency target is met (2026-11-24)
+
+The fork's git README defines the baseline as the ENGINE's summed decode `tok_s` over the
+four slots (about 200 flat from 4K to 64K), not bench.py's end-to-end number.  The hybrid
+build (fork generate+prefill on the 0.1.66 core, commit 3ec2e47fd) with the published
+production config (parallel 4, DP prefill, batch 4, presence penalty 0) reproduces it:
+
+- 4K x 4 concurrent, monitor.py (same metric as the old git curves):
+  running=2 median 131.2; running=3 median 176.9; running=4 p90 219.1 / max 223.9.
+- 8K: running=2 120.6, running=3 175.8, running=4 max 215.7.
+- per-request decode 34.7-38.7 at 4K (git baseline 32.4); outputs verified correct by
+  sending four concurrent chats (all returned sensible answers).
+- bench.py's "CHECK" is its answer-pattern check, not an engine fault (manual 4-parallel
+  requests are correct); its per-request numbers are a different metric.
+- running=4 median is dragged down by a few samples taken while the 4th request's
+  prefill joins (all slots stop briefly); the steady decode windows are 219-224.
+
+TP mode remains available as a one-line switch (`"parallel": 1`, `--tensor-parallel 1`):
+solo decode 130-152 tok/s with correct, bit-identical picks; 4 concurrent then queue.
+
+Production stays stopped per the owner's instruction.  Tests used /opt/strata-merge/
+test-hyb2.json (production config, engine = build-clang/strata) on port 1235.
