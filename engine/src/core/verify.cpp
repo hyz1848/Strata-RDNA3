@@ -5764,6 +5764,13 @@ int Verifier::batch_poll(PoolMultiFn pool, void* user, std::string& err) {
                 return -1;
             }
             if (now - last_ring() > std::chrono::seconds(20)) {
+                if (std::getenv("STRATA_BATCH_TRACE_DUMP")) {
+                    std::fprintf(stderr, "batch trace dump: lb %lld le %lld b_k %lld b_steps %lld seq %u served %u last_t %d running %d\n",
+                                 (long long) lb_, (long long) le_, (long long) b_k_, (long long) b_steps_,
+                                 (unsigned) *(volatile uint32_t*) h_seq_, (unsigned) *(volatile uint32_t*) h_flag_,
+                                 last_t_, (int) b_running_);
+                    trace_dump(stderr);
+                }
                 err = "verify batch: timed out at layer " + std::to_string(lb_ + b_k_) +
                       released_note(release_gpu_waits(5000));
                 b_running_ = false;
