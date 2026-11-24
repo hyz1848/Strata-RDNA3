@@ -1145,6 +1145,7 @@ struct Options {
     /// 2 = the decode windows too: stage 0 runs window K+1 speculatively while stage 1 verifies window K (rolled back
     /// when K is not accepted as guessed).  0 = off (the stages take turns).
     /// -1 (not asked for) = 2 on gfx12 (HIP) layer splits of 3 or more stages, else 0; --pipeline-windows N asks for it.
+    int tensor_parallel = 0;   ///< 0 off; 1 = experts with the layer split owner card; 2 = by expert id
     int pipeline_windows = -1;
     /// A layer split: each card keeps the dense weights of its own layers only (the rest of the model's are another
     /// card's), and the VRAM this frees goes to its expert cache.  --no-trim-stage-weights: every card keeps them all.
@@ -4057,6 +4058,10 @@ int main(int argc, char** argv) {
         else if (a == "--spec-min-p") o.spec_min_p = std::atof(next("--spec-min-p"));
         else if (a == "--stop-eos") o.stop_eos = true;
         else if (a == "--spec-split") o.spec_split = true;
+        else if (a == "--tensor-parallel") {
+            ++i;
+            o.tensor_parallel = (i < argc && (std::string(argv[i]) == "1" || std::string(argv[i]) == "2")) ? std::atoi(argv[i]) : 2;
+        }
         else if (a == "--layer-split") o.layer_split = next("--layer-split");
         else if (a == "--split-device") o.split_device = next("--split-device");
         else if (a == "--split-skip-if-fits") o.split_skip_if_fits = true;
