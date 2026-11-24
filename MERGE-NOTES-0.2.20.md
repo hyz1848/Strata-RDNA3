@@ -338,3 +338,25 @@ solo decode 130-152 tok/s with correct, bit-identical picks; 4 concurrent then q
 
 Production stays stopped per the owner's instruction.  Tests used /opt/strata-merge/
 test-hyb2.json (production config, engine = build-clang/strata) on port 1235.
+
+## Piped-MTP (the 194+ path): precise state (2026-11-24, end of session)
+
+- Mechanism: the 0.1.59 fork's ~194 aggregate = ~3.2 output tokens per verified row, i.e.
+  slot drafts inside the pipelined group windows.  0.1.66's pipelined groups run 1 row per
+  slot and no drafts (51.5 rows/s -> 177.9 aggregate).
+- STRATA_PIPED_MTP=N is that feature in 0.1.66.  To engage it: `--batch-mtp` + `STRATA_PIPED_MTP=2`
+  AND `STRATA_BATCH_SELF_COMMIT=0` (gfx11 arch defaults force 1, which disables it).
+- Both stage verifiers then report `deferred=1 max_t=8` (STRATA_PM_DIAG).
+- ONE request works with it and is fast (8K: prefill 2518-2603, decode 109-124).
+- FOUR concurrent (2 groups of 2 slots) deadlocks deterministically:
+  `verify batch: timed out at layer 27` (stage 1, 4th layer), engine restarts.
+- Suspects to check next, in order:
+  1. `pump()` (generate.cpp ~17940-18220): `batch_poll` per stage; whether the two groups'
+     alternating windows on the SAME stage verifier (`stages[0]->ver`) race the deferred
+     commit state (rings, epoch, snapshot) - single group works, two do not;
+  2. the hand-off: hrows = 12 (`max(kVerifyNarrowT, pm_group_rows()*groups)`, pm_group_rows=6),
+     `G.hbase = pmtp_group_cap*pick`, `set_handoff_rows(12)` only when > kVerifyNarrowT;
+  3. `batch_commit_rows(G.rows, G.S, G.hbase, ...)` for the second group.
+- Reproducer: /opt/strata-merge/test-pmd.json (STRATA_PM_DIAG=1, self-commit 0, batch-mtp,
+  STRATA_PIPED_MTP=2, no --pipeline-windows), /tmp/start_old.sh, port 1235, 4x8192.
+- Production runs the same 0.1.66 build WITHOUT piped MTP (178 aggregate, correct output).
