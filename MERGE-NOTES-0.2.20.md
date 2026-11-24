@@ -212,3 +212,17 @@ position), fork passed the number of cells consumed after the prompt (prompt len
 `cells = p` the last prompt cell (119) is not copied and the windows read an unwritten cell;
 prefill length/chunking then decides which garbage the first pick sees, explaining the spec-4
 vs spec-2 difference.  Next: pass `p + 1` (or the fork's `at`) and A/B the first two tokens.
+
+### TP: MMVQ_IL=0 helps but correctness is intermittent (2026-11-24, latest)
+
+- `STRATA_MMVQ_IL=0` (now forced in code for `--tensor-parallel 1`, commit b3d24b7c3)
+  made a 120-token GEN reproduce the layer-split picks (9707 x4, twice).
+- Later runs of the SAME command give 48,48,1 or 1,36,48,198, and `--spec 5` gave a
+  single EOS (248044).  So the multi-row path improved but there is still a race.
+- GEN with 2 tokens is still wrong (15,11,220 vs 198,...) - prompt read via run_tp
+  windows (T=3) is the failing path there; GEN 120 uses Prefill then windows.
+- Chat garbage (860-token prompt, Prefill) too: so it is not only the prompt-window path.
+- Prime remaining suspect: the per-window PLE/epoch hand-off (`tp_ple_ready`, the
+  `h_ple_prev` history in `tp_ss`), or the state move's cell count for the last prompt
+  cell; both are read-before-write races that depend on prior VRAM/session content,
+  which matches "sometimes right, sometimes not, across processes".
