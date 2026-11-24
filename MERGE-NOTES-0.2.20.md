@@ -458,3 +458,17 @@ Implemented the structural isolation (not committed, reverted to keep the tree g
 Fact for the next session: pmtp with ONE group is correct and fast (8K: 47.4 tok/s per
 request at 2 concurrent vs 23 without drafts).  The remaining bug is only the
 two-windows-in-flight flow control.
+
+### Clarification: the pmtp deadlock is during the PROMPT READ, not decode (2026-11-24)
+
+Every failing 3-4 client run reports `prompt=0` in bench: the engine never finished the
+first prompt read.  The 2-client run (one group) reads 7,639 tokens and decodes at 47.4
+tok/s.  So two groups READING their prompts at the same time is what deadlocks - the
+decode windows never even start.
+
+That moves the next probe to the read path with pmtp: `read_part` / `run_conc` /
+`STRATA_BATCH_CONCURRENT_READ` (generate.cpp ~20800-21480) and the slot read windows
+(`bs[].rd_on`, `pmtp_plan`) - not `pump`'s decode launches.  A quick test for tomorrow:
+force the prompt reads one at a time (`STRATA_BATCH_CONCURRENT_READ=0` is already the
+default; find the admission/read serialisation switch) and see whether the deadlock
+disappears - if yes, the read windows are the two-in-flight case to fix.
