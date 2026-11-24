@@ -7724,6 +7724,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- TENSOR PARALLEL (fork core/tp.hpp): both cards' sessions at half the heads, sliced weights (port)
+    // TP: the multi-row interleaved MMVQ path is not half-width aware (T >= 2 windows diverged); T = 1 is fine
+    if (o.tensor_parallel == 1 && std::getenv("STRATA_MMVQ_IL") == nullptr) setenv("STRATA_MMVQ_IL", "0", 1);
     const bool tp_on = o.tensor_parallel == 1 && multi_gpu && stages.size() == 1 && !split_same && o.batch == 0 &&
                        o.peer_device < 0 && !o.mtp.empty() && o.spec >= 2;   // 0.1.66 merge: mode 1 only
     const bool tp2 = false;   // 0.1.66 merge: mode 2 (experts by id) not ported yet   // experts by id: two residency tables (host_res, host_res1)
