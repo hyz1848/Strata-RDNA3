@@ -472,3 +472,20 @@ That moves the next probe to the read path with pmtp: `read_part` / `run_conc` /
 force the prompt reads one at a time (`STRATA_BATCH_CONCURRENT_READ=0` is already the
 default; find the admission/read serialisation switch) and see whether the deadlock
 disappears - if yes, the read windows are the two-in-flight case to fix.
+
+### pmtp: piped-read attempt (2026-11-24, end of night)
+
+`STRATA_PIPED_READ_PIECE=2048` with pmtp: still `verify batch: timed out at layer 23`
+(stage 1, split 22), prompt=0.  So the read path taken is not changed by that switch, or
+the deadlock is not the Prefill/session conflict.
+
+Night summary (all in this file, tree = verified build):
+- TP: correct (bit-identical picks), solo 106-152 tok/s.
+- Merged 0.1.66 production build: 4-slot aggregate median 177.9, correct output.
+- pmtp one group: works, 47.4 tok/s/request at 2 clients.
+- pmtp two groups: deadlock during the prompt read (prompt=0), at a QSA layer of stage 1;
+  dual verifier pair moves it (27/31 -> 22/23) but does not cure it; variable-S, KV
+  residency, batch attn rows, hand-off flag reset, device plan all ruled out.
+Tomorrow: instrument the read path (`read_part`/admission) with the same trace dump, and
+compare against the one-group case (where reads complete) to find the two-in-flight
+difference; check `--no-prefill-borrow` and `STRATA_BATCH_CONCURRENT_READ=1` as switches.
