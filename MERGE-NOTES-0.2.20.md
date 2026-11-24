@@ -294,3 +294,24 @@ math for T=1 even (half heads + exchange).  A cheap discriminator: run a 2-token
 Then compare `ours`' `verify.cpp` window prologue against 0.1.66's *other* kernels it
 calls via the tree's headers (`native_rope.cu`, `qsa_decode_attn.cu`, `ple.cu` differ from
 ours) - one of those is half-width aware in the fork and not in 0.1.66.
+
+## TP IS WORKING - measurements (2026-11-24)
+
+Build: fork generate+prefill on the 0.1.66 core (commit 3ec2e47fd).  Same pack, 2x7900 XTX.
+
+TP (`--tensor-parallel 1`, parallel 1, MMVQ_IL off is NOT needed by this driver):
+- picks identical to the layer split / fork TP (120-token prompt: 9707 x4; 2-token: 248046).
+- single 1K: decode 130.7 / 143.3 tok/s, prefill 375-394 (short-prompt gap)
+- single 16K: decode 124.0 / 150.9 tok/s, prefill 2157-2161
+- chat: correct text, 63-token prompt: 82 prefill, 102.7 decode
+- 4 concurrent 8K (server queues, parallel 1): per-request decode 135.6 / 152.1,
+  end-to-end aggregate 37.6 / 39.2
+
+Layer split (0.1.66 build): 16K prefill 3263, solo decode 109-120; 4-conc per-request
+~77 (0.1.66 generate), hybrid batch 20.5 (ours' 0.1.59 batch driver is worse).
+
+Conclusion: TP delivers the fork's per-request decode (134-152).  It cannot run batch
+windows (both drivers gate TP on --batch 0), so 4-concurrent aggregate is bounded by
+queueing (~38 end-to-end, prefill-dominated).  If the old 194 number was engine-side
+rows/window it is not the same metric as these; if it was end-to-end tok/s it is not
+reachable with TP alone - a concurrency path over TP (or batch) is a separate project.
