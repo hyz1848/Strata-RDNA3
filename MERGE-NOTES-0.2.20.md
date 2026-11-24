@@ -55,3 +55,25 @@ window double-buffering: the A window runs on stage 1 while the B window's stage
 starts, with `init_deferred_commit` / `batch_launch_rows` / `batch_commit_rows` over the
 two parities (solo has this; batch does not). The 8-slot config already reaches 211 at 16
 rows and is the working answer meanwhile.
+
+## TP is the missing core (owner's direction)
+
+0.1.66 ships `src/core/tp.cpp` and `include/strata/core/tp.hpp`, but nothing wires
+them: `generate.cpp` has no `--tensor-parallel`, no `tp_on`, and `verify.cpp` never
+builds a `TpLink`; `verify_kernels` is the upstream one (no `tp_exchange`). The fork's
+TP (ours branch) is the 2x decode the old engine had.
+
+Port order (ours -> 0.1.66):
+
+1. `verify_kernels.{hpp,cu}`: `tp_window_begin`, `tp_exchange`, `tp_exchange_blocks`,
+   `tp_wait_epoch` (ours has them; 0.1.66 does not).
+2. `verify.cpp/hpp`: `TpLink`, the per-layer exchange points, head split, `set_tp_head_split`,
+   `tp_gpu_only_`, `tp_other_res`, the batch row tables for two-card rows.
+3. `generate.cpp`: `--tensor-parallel` parse, `tp_on = ... && o.batch == 0`, session/dev
+   setup for the pair, `run_tp`/TP prefill, the head split, the DP/TP helpers ours calls.
+4. `prefill`: `gdn_recurrence_tp`, `tp_y16_pack`, `tp_gdn_merge`, `help_remap`, the TP
+   chunk loop (`ours` prefill/kernels.cu has them; the merged tree's prefill.hpp still
+   declares them).
+5. Acceptance: `--tensor-parallel 2` (batch 0), solo 1K/6.5K decode 134-150, 4 concurrent
+   with `"parallel": 1` (queued) aggregate ~76, or TP beside batch if PR#15's route is
+   taken; the target is decode aggregate >= 194 at 4 concurrent.
