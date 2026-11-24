@@ -383,3 +383,25 @@ Candidate fixes: make the hand-off ring hold two groups' rows for the wait to re
 or make `batch_poll` non-blocking/serve both stages in one turn when a second group is
 in flight (the pump already loops stages; check that `batch_poll` returns instead of
 blocking while it waits for the ring).
+
+### pmtp 2-slot groups: the pump trace names the stall (2026-11-24, end)
+
+`STRATA_P4_TIMING=1` on the reproducer:
+```
+strata p4: s1 free ticks: with a group waiting 0, starved 1857988
+```
+Stage 1 was free for 1.86M ticks with NO group waiting at it, yet a group was
+"starved" - i.e. a group sat at stage 1 and was never launched there while stage 1 was
+free, because `stage_group[1]` was still taken by the OTHER group, whose 6-row window had
+rung all 24 steps (stage-0 count) and never finished.  So the two groups' windows on the
+SAME stage-1 verifier are the deadlock: one holds the verifier, the other waits.
+
+Note: `stage_batch` does NOT reset the split hand-off flag (`hflag_out_h_` is only reset
+in `stage_inputs`, i.e. solo launches), so batch windows reuse the flag from the previous
+window - with two groups that is a stale/consumed flag, not a wait.  The stuck graph is
+past all 24 doorbells (flags served=A=B=24), so its wait is after the last layer: the
+head path on the last stage, or the expert pool's last-layer flags with a second window
+in flight on the same verifier.
+Next: dump `trace_ev` on this path (batch_poll has no trace_dump on the timeout branch;
+add one before `release_gpu_waits`), and check `batch_serve`'s per-row counts for a
+second window while one is in flight (the ring is per verifier, not per group).
