@@ -169,3 +169,16 @@ Checks for next session:
   `verify.cpp` TP call sites (kVerifyNarrowT paths, `tp_shexp_split`, `tp_gpu_only_`,
   the out-proj half width) against `ours` one by one - the likely drift is a call that
   0.1.66 renamed/reshaped.
+
+### TP numerics A/B (2026-11-24, last)
+
+Same 2-token prompt, max_tokens 1, temp 0:
+- `--tensor-parallel 0` (everything else identical): `We`, `We` - deterministic.
+- `--tensor-parallel 1`: `!` then `\n` (two identical requests, different picks) - the TP
+  window is nondeterministic, so something is read before it is written.
+- `STRATA_TP_INBOX=vram` gives the same nondeterminism (so it is not the pinned-page path).
+- config pairs: /opt/strata-merge/test-tp1.json / test-tp0.json, /tmp/start_tp1.sh.
+
+Next: the expert path (pool plan vs the pair's own caches), `tp_shexp_split`, and the PLE
+copy (`tp_ple_ready`); also `STRATA_TP_HEAD_CHECK=1` (compare the head card's pick with
+the full head) to see whether the residual rows are already wrong before the head.
