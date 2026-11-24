@@ -182,3 +182,16 @@ Same 2-token prompt, max_tokens 1, temp 0:
 Next: the expert path (pool plan vs the pair's own caches), `tp_shexp_split`, and the PLE
 copy (`tp_ple_ready`); also `STRATA_TP_HEAD_CHECK=1` (compare the head card's pick with
 the full head) to see whether the residual rows are already wrong before the head.
+
+### TP: devplan A/B (2026-11-24, last)
+
+`STRATA_TP_DEVPLAN=0` (host-side expert plans) gives the same nondeterminism (`!` then `\n`),
+so it is not the device plan either.  Remaining suspects, in order:
+1. the first pick's path: `finish_head` on card 1 vs the host reading rows `final_R`;
+   check `Verifier::logits()/final_R*` forward to the head card AND sync the PEER stream
+   (a peer stream sync is missing => read-before-write, exactly the symptom);
+2. `tp_ple_ready` copy + `tp_epoch_` word (PLE rows of the pair);
+3. shared-expert split (`STRATA_TP_SHEXP=0/1/2`) - only 1 was tried, all wrong.
+
+`set_sampling`/`set_logit_bias` do forward through `next_` (verify.hpp:150,153), so the
+sampling settings are not the cause.
