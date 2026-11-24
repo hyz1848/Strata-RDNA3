@@ -4450,6 +4450,16 @@ bool Verifier::run_tp(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn po
     Verifier* h = tp_head_ ? this : tp_peer_;
     const OnDevice on_h(h->device_);
     if (!h->finish_head(T, tokens, pos0, out, err)) return false;
+    if (std::getenv("STRATA_TP_RDIFF")) {   // the fork claims both cards hold bitwise the same residual rows
+        const size_t nf = (size_t) T * (size_t) (g_->hc * g_->n_embd);
+        std::vector<float> ra(nf), rb(nf);
+        std::memcpy(ra.data(), R_, nf * sizeof(float));   // R_ is host-visible (mapped) in this build
+        std::memcpy(rb.data(), tp_peer_->R_, nf * sizeof(float));
+        float md = 0.0f; size_t mi = 0;
+        for (size_t i = 0; i < nf; ++i) { const float d = std::fabs(ra[i] - rb[i]); if (d > md) { md = d; mi = i; } }
+        std::fprintf(stderr, "tp rdiff: T %d pos %lld max %.6g at %zu (a %.6f b %.6f)\n", T, (long long) pos0, (double) md, mi,
+                     md > 0.0f ? ra[mi] : 0.0f, md > 0.0f ? rb[mi] : 0.0f);
+    }
     VDBG("window done\n");
     progress_at("decode");
     progress_beat();

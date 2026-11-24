@@ -23081,6 +23081,17 @@ int main(int argc, char** argv) {
                 const auto decode_pool_fn = use_mtp && mtp.prob() ? invariant_win_pool_fn : win_pool_fn;
                 exit_if_gpu_fatal("");   // (the test hook counts windows here)
                 if (tp_on && !tp_to(true, p, err)) { std::printf("ERR %s\n", err.c_str()); return 1; }
+                if (std::getenv("STRATA_TP_DUMP")) {
+                    static int dn = 0;
+                    if (dn < 2) {
+                        const float* Rd = ver.final_R_all();
+                        double s8 = 0.0;
+                        for (int i = 0; i < 8; ++i) s8 += (double) Rd[i];
+                        std::fprintf(stderr, "tp dump: n%d T %d pos %lld R %.6f %.6f %.6f %.6f | %g %g %g %g sum8 %.6f\n",
+                                     dn, T, (long long) p, Rd[0], Rd[1], Rd[2], Rd[3], Rd[4], Rd[5], Rd[6], Rd[7], s8);
+                        ++dn;
+                    }
+                }
                 if (tp_on && std::getenv("STRATA_TP_TRACE")) std::fprintf(stderr, "tp trace: decode run T %d pos %lld\n", T, (long long) p);
                 if (!ver.run(T, window.data(), p, decode_pool_fn, win_pool_user, outv.data(), err) || drive.d.failed) {
                     exit_if_gpu_fatal(drive.d.failed && drive.d.fail ? drive.d.fail : err);

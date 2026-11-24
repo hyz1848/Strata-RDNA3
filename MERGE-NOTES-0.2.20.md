@@ -276,3 +276,21 @@ pair AND on the stage sessions (they should match the non-TP build); and dump th
 window's logits top-5 from the head card.  That tells whether the state diverges at the
 read or the head/pick.  `STRATA_TP_HEAD_CHECK` only covers the (unported) head split, so
 it does not help yet.
+
+### TP: the divergence is already in the first window after the prompt (2026-11-24)
+
+`STRATA_TP_DUMP=1` prints the head card's residual rows before each window (they are the
+previous window's output).  120-token GEN, Prefill, --spec 4, MMVQ_IL=0:
+- non-TP: T 1 pos 119 -> 9707, R after it = 0.354 -0.189 -0.027 -0.017 ...
+- TP:     T 1 pos 119 -> 198 sometimes / 271 others, R = 0.031 0.471 -0.253 0.595 ...
+So the very first T=1 window after the prompt already produces different rows on the pair.
+`--kv-resident 32768` does not change it.  `STRATA_TP_RDIFF` currently reads zeros on both
+cards (`R_` is not the host-visible copy - `final_R_all()` forwards to the head card and
+that is what generate reads); fix the instrument before trusting it.
+
+Two possible causes remain: (a) `tp_state_move` after the Prefill, (b) the TP window's
+math for T=1 even (half heads + exchange).  A cheap discriminator: run a 2-token prompt
+(prompt read on the pair, no Prefill, no move) - it is also wrong - so (b) is likely.
+Then compare `ours`' `verify.cpp` window prologue against 0.1.66's *other* kernels it
+calls via the tree's headers (`native_rope.cu`, `qsa_decode_attn.cu`, `ple.cu` differ from
+ours) - one of those is half-width aware in the fork and not in 0.1.66.
