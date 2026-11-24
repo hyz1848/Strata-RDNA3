@@ -360,3 +360,26 @@ test-hyb2.json (production config, engine = build-clang/strata) on port 1235.
 - Reproducer: /opt/strata-merge/test-pmd.json (STRATA_PM_DIAG=1, self-commit 0, batch-mtp,
   STRATA_PIPED_MTP=2, no --pipeline-windows), /tmp/start_old.sh, port 1235, 4x8192.
 - Production runs the same 0.1.66 build WITHOUT piped MTP (178 aggregate, correct output).
+
+### pmtp 2-group deadlock: the stall report (2026-11-24, end)
+
+Stall report on the hang (4x8192, pmtp, 2 groups of 2):
+```
+verify window (last window, not the current stage): 6 tokens at position 7639,
+host at layer step 24; the GPU rang 24; flags: served 24, plan (A) 24, copies (B) 24
+expert pool: epoch 258 ... 56 of 56 jobs claimed, 56 done; 8 workers parked
+```
+So it is a 6-row pmtp window, the host is fully caught up (served = A = B = 24 = the
+stage-0 layer count) and the GPU never rings step 25: stage 0's window waits at the
+hand-off/last step for the stage-1 side, while stage 1 cannot run because the host is
+inside stage 0's `batch_poll`.  With ONE group (one request) the same window completes.
+
+That is a pipelined two-group flow-control gap at the stage hand-off, not a kernel:
+- `stage_batch` accepts hbase+S <= handoff rows (6+6 <= 12, handoff_rows_ = 12), so the
+  check passes; the wait itself is downstream (verify.cpp ~1600-1700, hrow0/hand_in_ and
+  the last-step ring), or the pump's poll order (generate.cpp pump ~17950, `batch_poll`
+  for stage 0 before stage 1).
+Candidate fixes: make the hand-off ring hold two groups' rows for the wait to release,
+or make `batch_poll` non-blocking/serve both stages in one turn when a second group is
+in flight (the pump already loops stages; check that `batch_poll` returns instead of
+blocking while it waits for the ring).
