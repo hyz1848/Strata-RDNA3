@@ -250,3 +250,13 @@ was not the whole bug.  `native_head.cpp`, `dflash2.cpp` and `verify.cpp` also c
 `native_mmvq_il`; verify's calls honor `g_mmvq_il()` (now forced 0 for TP), the other two
 need the same treatment.
 Also added the fork's move-back after a request (no change to the tokens).
+
+### TP: what the fork's production path actually used (2026-11-24)
+
+The fork configs all carry `STRATA_TP_PREFILL=1` (`PreFill::run_tp`): the prompt is read
+ON THE PAIR in segments, so the pair's state is built directly and the stage->pair
+hand-over is only for short prompts / the odd window.  We disabled it (not ported), which
+is why every request depends on `tp_state_move` and why the numbers are fragile.  Porting
+`Prefill::run_tp` (ours' `src/prefill/prefill.cpp`, `tp_state_move`/`tp_y16_pack` already
+in the tree) is the next real step; then re-measure solo decode (fork: 134-150 tok/s) and
+compare with the layer split before deciding anything about concurrency.
