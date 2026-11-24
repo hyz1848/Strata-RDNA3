@@ -439,3 +439,22 @@ per-window table follow the actual S: check `capture_deferred`/`dcommit_bm_` key
 commit replay `pm_all_kept` for the S=5 launch.  Also try the same repro with
 `STRATA_SLOT_READ_MAX=0`/no lookup to see whether just the draft *count* varies (S=5) or
 the window always launches short.
+
+### pmtp: dual verifier pair tried; still deadlocks (2026-11-24, final)
+
+Implemented the structural isolation (not committed, reverted to keep the tree good):
+- `mtp_dual = piped_mtp && groups>=2 && one split && !split_same`;
+- a second verifier pair `ver_b` / `stages[k]->ver_b` initialised like the primary
+  (same weights/session/hits/head, own slots, own deferred commit, own hand-off rows),
+  `G.vsel = pick & 1` selects the pair at launch, poll, both commits and slot history.
+- Result: the deadlock MOVED (from layer 27/31 to layer 22, stage 1's first layer) but did
+  not go away, so two windows in flight still conflict somewhere not tied to one
+  verifier's flags/graphs (candidates left: the shared `split_drive`/`win_pool_fn` user
+  context, the shared `slot_mtp` chains on the drafter's stream, or the shared hand-off
+  buffers through `split_drive`).
+- The reverted tree is the verified build (177.9 aggregate, correct); all reproducers and
+  commands are in this file.
+
+Fact for the next session: pmtp with ONE group is correct and fast (8K: 47.4 tok/s per
+request at 2 concurrent vs 23 without drafts).  The remaining bug is only the
+two-windows-in-flight flow control.
