@@ -13599,6 +13599,13 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (std::getenv("STRATA_PM_DIAG")) {
+            for (int k = 0; k < n_stages; ++k) {
+                strata::core::Verifier& vk = k == 0 ? ver : stages[(size_t) k - 1]->ver;
+                std::fprintf(stderr, "pm diag: stage %d deferred=%d max_t=%d stream_set=%d\n", k, (int) vk.deferred_commit_on(),
+                             vk.max_t(), (int) (vk.stream() != nullptr));
+            }
+        }
         for (int st = 0; st < n_stages && n_stages > 1; ++st) {
             split_drive.plan[st] = stage_ver(st).plan_sink();
             if (st > 0) {
@@ -17890,7 +17897,7 @@ int main(int argc, char** argv) {
             for (int b = 0; b < (int) bs.size(); ++b)   // (a chain in flight would refuse the drafter's next use)
                 if (pmtp_poll_draft(b, true) < 0) return false;
             for (int k = 0; k < n_pipe; ++k) {
-                strata::core::Verifier& vk = stage_verifier(k);
+                strata::core::Verifier& vk = k == 0 ? ver : stages[(size_t) k - 1]->ver;
                 const strata::core::OnDevice on_k(vk.device());
                 if (cudaStreamSynchronize(vk.stream()) != cudaSuccess) {
                     std::printf("ERR a pipelined commit failed on stage %d\n", k + 1);
@@ -17956,7 +17963,7 @@ int main(int argc, char** argv) {
             for (int k = 0; k < n_pipe; ++k) {
                 const int gi = stage_group[(size_t) k];
                 if (gi < 0) continue;
-                strata::core::Verifier& vk = stage_verifier(k);
+                strata::core::Verifier& vk = k == 0 ? ver : stages[(size_t) k - 1]->ver;
                 const auto p4_p0 = p4.now();
                 const int r = vk.batch_poll(win_pool_fn, win_pool_user, err);
                 p4.polled(p4_p0);
@@ -21046,7 +21053,7 @@ int main(int argc, char** argv) {
                         while (bells.on.load(std::memory_order_acquire)) {
                             bool busy = false;
                             for (int k = 0; k < n_pipe; ++k) {
-                                auto& vk = stage_verifier(k);
+                                auto& vk = k == 0 ? ver : stages[(size_t) k - 1]->ver;
                                 if (vk.batch_busy()) {
                                     busy = true;
                                     vk.batch_serve(win_pool_fn, win_pool_user);
