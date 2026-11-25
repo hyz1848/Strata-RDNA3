@@ -20834,6 +20834,7 @@ int main(int argc, char** argv) {
                     } else {
                         run_ok = sp.run(ids.data() + q, r - q, q, e);
                     }
+                    if (run_ok && pmtp && !pmtp_settle()) return false;   // the prompt read leaves the pair's streams as the windows expect
                     if (run_ok && q == 0 && sp.kva_floor() > 0) {   // KVA approximated the start of this prompt: remember which tokens
                         kva_floors.note(ids.data(), sp.kva_floor());
                         if (use_mtp && mtp.cell_floor_enabled()) mtp.set_cell_floor(sp.kva_floor());
