@@ -5775,9 +5775,10 @@ int Verifier::batch_poll(PoolMultiFn pool, void* user, std::string& err) {
                                  (int) split_, (int) batch_rec_);
                     trace_dump(stderr);
                 }
-                { unsigned long long wd[2] = {0, 0}; strata::kernels::wait_dbg(wd, nullptr);
-                  if (wd[0] != 0) std::fprintf(stderr, "batch wait dbg: plan want %llu flag %llu\n",
-                                              (unsigned long long) wd[0], (unsigned long long) wd[1]); }
+                { unsigned long long wd[6] = {0, 0, 0, 0, 0, 0}; strata::kernels::wait_dbg(wd, nullptr);
+                  if (wd[0]) std::fprintf(stderr, "batch wait dbg: ge want %llu flag %llu\n", wd[0], wd[1]);
+                  if (wd[2]) std::fprintf(stderr, "batch wait dbg: or want %llu flag %llu\n", wd[2], wd[3]);
+                  if (wd[4]) std::fprintf(stderr, "batch wait dbg: copy want %llu flag %llu\n", wd[4], wd[5]); }
                 err = "verify batch: timed out at layer " + std::to_string(lb_ + b_k_) +
                       released_note(release_gpu_waits(5000));
                 b_running_ = false;

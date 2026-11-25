@@ -214,9 +214,15 @@ __global__ void doorbell_ring_kernel(uint32_t* seq) {
 #endif
 }
 
+__device__ unsigned long long g_wait_door_want = 0, g_wait_door_val = 0;
+__device__ unsigned long long g_wait_rows_want = 0, g_wait_rows_val = 0;
 __global__ void doorbell_wait_kernel(const volatile uint32_t* flag, const volatile uint32_t* seq) {
     const uint32_t want = *seq;
-    while (*flag != want) strata_spin_pause();
+    unsigned long long it = 0;
+    while (*flag != want) {
+        strata_spin_pause();
+        if ((++it & 65535ull) == 0ull) { g_wait_door_want = want; g_wait_door_val = *flag; }
+    }
     __threadfence_system();
 }
 
@@ -243,7 +249,11 @@ __global__ void copy_rows_from_mapped_kernel(float4* __restrict__ dst, const vol
     __shared__ int hit;
     if (threadIdx.x == 0) {
         if (wait_flag != nullptr) {   // 143-amdk: the wait_flag_ge launch folded in
-            while (*wait_flag < wait_value) strata_spin_pause();
+            unsigned long long it = 0;
+            while (*wait_flag < wait_value) {
+                strata_spin_pause();
+                if ((++it & 65535ull) == 0ull) { g_wait_rows_want = wait_value; g_wait_rows_val = *wait_flag; }
+            }
             __threadfence_system();
         }
         int h = 0;
@@ -471,3 +481,16 @@ void rms_norm_weighted(float* x, const float* w, int64_t rows, int64_t cols, flo
 }
 
 }  // namespace strata::kernels
+
+namespace strata::kernels {
+void wait_dbg_extra(unsigned long long out[4]) {
+    unsigned long long w = 0, v = 0;
+    (void) cudaMemcpyFromSymbol(&w, g_wait_door_want, sizeof(w));
+    (void) cudaMemcpyFromSymbol(&v, g_wait_door_val, sizeof(v));
+    out[0] = w; out[1] = v;
+    w = v = 0;
+    (void) cudaMemcpyFromSymbol(&w, g_wait_rows_want, sizeof(w));
+    (void) cudaMemcpyFromSymbol(&v, g_wait_rows_val, sizeof(v));
+    out[2] = w; out[3] = v;
+}
+}

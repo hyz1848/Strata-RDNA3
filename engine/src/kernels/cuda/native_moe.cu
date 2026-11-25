@@ -109,6 +109,7 @@ __global__ void combine_k10_vec4(const float4* __restrict__ parts4, const float*
     output4[c4] = sum;
 }
 // STRATA_COMBINE_CPU: combine_k10_vec4 with each part read where the window left it (see native_moe_combine_multi_cpu)
+__device__ unsigned long long g_wait_comb_want = 0, g_wait_comb_val = 0;
 template <bool GATED>
 __global__ void combine_cpu_k10_vec4(const volatile float4* cpu4, const float4* __restrict__ hit4,
                                      const int32_t* __restrict__ hit_rows, const int32_t* __restrict__ count,
@@ -118,7 +119,11 @@ __global__ void combine_cpu_k10_vec4(const volatile float4* cpu4, const float4* 
     const int64_t tk = blockIdx.y;
     __shared__ int hit[10];
     if (flag != nullptr && threadIdx.x == 0) {   // STRATA_WAIT_FUSE: the CPU-share wait in every block
-        while (*flag < value) strata_spin_pause();
+        unsigned long long it = 0;
+        while (*flag < value) {
+            strata_spin_pause();
+            if ((++it & 65535ull) == 0ull) { g_wait_comb_want = value; g_wait_comb_val = *flag; }
+        }
         __threadfence_system();
     }
     if (threadIdx.x < 10) {
@@ -409,5 +414,14 @@ void native_moe_combine_multi_cpu(const float* cpu, const float* hit, const int3
             hit_rows, count, weights, reinterpret_cast<const float4*>(shared), nullptr, reinterpret_cast<float4*>(output), n4, wait_flag, wait_value);
     const auto error = cudaGetLastError();
     if (error != cudaSuccess) throw std::runtime_error(cudaGetErrorString(error));
+}
+}
+
+namespace strata::kernels {
+void wait_dbg_comb(unsigned long long out[2]) {
+    unsigned long long w = 0, v = 0;
+    (void) cudaMemcpyFromSymbol(&w, g_wait_comb_want, sizeof(w));
+    (void) cudaMemcpyFromSymbol(&v, g_wait_comb_val, sizeof(v));
+    out[0] = w; out[1] = v;
 }
 }

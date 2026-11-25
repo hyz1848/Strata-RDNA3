@@ -2095,6 +2095,21 @@ void stall_report(std::FILE* f, uint64_t layers_during) {
                     "last finished step (0 = stopped, more = slow)\n", STRATA_VERSION, stage_text().c_str(),
                  (long long) ((strata::core::progress_now_ms() - p.since_ms.load()) / 1000),
                  (unsigned long long) layers_during);
+    for (int d = 0; d < 2; ++d) {
+        const strata::core::OnDevice on_d(d);
+        unsigned long long wd[6] = {0, 0, 0, 0, 0, 0};
+        strata::kernels::wait_dbg(wd, nullptr);
+        if (wd[0]) std::fprintf(f, "  CUDA%d wait_flag_ge: want %llu flag %llu\n", d, wd[0], wd[1]);
+        if (wd[2]) std::fprintf(f, "  CUDA%d wait_flag_ge_or: want %llu flag %llu\n", d, wd[2], wd[3]);
+        if (wd[4]) std::fprintf(f, "  CUDA%d wait_copy_i32: want %llu flag %llu\n", d, wd[4], wd[5]);
+        { unsigned long long e[4] = {0,0,0,0}; strata::kernels::wait_dbg_extra(e);
+          if (e[0]) std::fprintf(f, "  CUDA%d doorbell_wait(!=): want %llu flag %llu\n", d, e[0], e[1]);
+          if (e[2]) std::fprintf(f, "  CUDA%d copy_rows wait: want %llu flag %llu\n", d, e[2], e[3]); }
+        { unsigned long long c[2] = {0,0}; strata::kernels::wait_dbg_comb(c);
+          if (c[0]) std::fprintf(f, "  CUDA%d combine wait: want %llu flag %llu\n", d, c[0], c[1]); }
+        { unsigned long long st[2] = {0,0}; strata::kernels::wait_dbg_stamped(st);
+          if (st[0]) std::fprintf(f, "  CUDA%d wait_flag_ge_stamped: want %llu flag %llu\n", d, st[0], st[1]); }
+    }
     if (const int64_t vf = g_req_vram_free_mib.load(); vf >= 0) {
         std::fprintf(f, "  VRAM free when this request began: %lld MiB%s\n", (long long) vf,
                      vf >= kVramSafeMib ? "" : " - LOW: a card this full can page GPU memory to system RAM (decode "
@@ -20805,6 +20820,11 @@ int main(int argc, char** argv) {
                 };
                 bool conc_read = false;   // run_conc: the slots decode beside the read, so the share stays off for all of it
                 auto run = [&](int64_t q, int64_t r) -> bool {
+                    if (std::getenv("STRATA_DRAIN_DBG")) std::fprintf(stderr, "drain dbg: pmtp %d inflight %d\n", (int) pmtp, (int) pipe_inflight());
+                    if (pmtp && pipe_inflight()) {   // the prompt path and the pipelined batch windows cannot share a stage
+                        while (pipe_inflight()) if (!pump(false)) return false;
+                        if (!pmtp_settle()) return false;
+                    }
                     if (planned) sp.force_chunk(plan.chunk, plan_single, plan.chunked);
                     if (!conc_read) share_gate();   // STRATA_PREFILL_CPU_SHARE_BATCH: re-decided for every run (a piece beside decoding slots too)
                     bool run_ok;
