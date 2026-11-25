@@ -619,3 +619,21 @@ Next: with `STRATA_VERIFY_DEVICE_HITS=0` already, instrument the window tail (co
 `S=6` launch: compare the first S=6 window that completes vs the stuck one; check
 `batch_key`/`capture_deferred` for the 6-row layout and the `pm_copied` event wait on the
 drafter stream (a stale event recorded before the read settle could strand it).
+
+### Final measured state (2026-11-24, end)
+
+Kept (verified improvements, committed):
+- `STRATA_VERIFY_DEVICE_HITS=0` + drain-before-read + settle-after-read: fixes the >=7K
+  prompt READ hang; 2 and 4 clients with <=32 output tokens all complete.
+Rejected (measured worse / reverted):
+- forcing one pmtp window in flight at a time: 4 clients x 7.3K x 128 tokens did not
+  finish within 100 s (cancelled).  Reverted.
+
+Still open (the last real blocker): 4 clients x >=7K prompt x >=128 tokens: after reads,
+a 6-row pmtp window holds stage 1 (`stage_group -1 1`, group S=6 inflight) and the engine
+times out at layer 23 / watchdog.  Two clients with the same prompt and 256 tokens work.
+So it is specifically two pmtp groups in flight during a long decode.
+
+Tree = verified build + diagnostic probes; services stopped.  Next session: capture the
+`pm_copied`/chain state for both groups at the first stuck window (the 2-client work case
+is the control), then fix the cross-group event/flag ownership.
