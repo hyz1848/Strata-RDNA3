@@ -525,3 +525,29 @@ GEN/BGEN protocol over a FIFO) so backtraces are available without ptrace_scope;
   group, 3 clients x 8k prompts) -> `verify batch: timed out at layer 23`.
 
 Tree = verified build (verified 177.9 aggregate, correct). All services stopped.
+
+### Two-group pmtp: host is NOT blocked; the GPU window is (2026-11-24, morning)
+
+New diagnostics (committed): `STRATA_PMDBG` (pump state every 2 s), `STRATA_SERVE_DBG`
+(batch_serve steps + bells thread), and a fix attempt: when the pipe is empty and the
+slot's MTP chain is still running, pump now waits for it (`pmtp_poll_draft(b, true)`)
+before declaring the group not ready.
+
+Measured:
+- pump keeps ticking (~2M ticks/s): the host is alive and serving; `stage_group` shows
+  stage 1 held by group 1, group 1 `inflight 1 S 3`, group 0 waiting `S 6`.
+- the stall report for the OTHER stage: `5 tokens at pos 1651, step 22, served 22,
+  plan 22, copies 22`; after `release_gpu_waits` the GPU finishes in 0 ms -> the stuck
+  graph is inside a wait that release clears (h_flag_/A/B/hflag_in).
+- so: the host served every layer of stage 0's window; stage 1's window never completes;
+  the wait is below the doorbells (a graph node that release's flag writes unblock).
+- the empty-pipe draft fix did not change it (the hang is earlier).
+
+Next concrete step: the release behaviour is the clue - find which wait node a *batch*
+window still carries (candidates: `wait_flag_ge` for flagA/flagB of a row whose pool
+publication the host skips when S shrinks, or the `hflag_in_` wait if a graph captured
+without `batch_rec_`).  Grep the captured batch window for waits keyed on `want` values
+beyond `b_steps_` (S smaller than the captured layout) - i.e. capture with a different S
+than the launch (the S=3 window reusing a 6-row graph) would wait forever on a step the
+host never serves.  That now looks like the strongest lead: verify `bkey(rows,S,hbase)`
+colouring vs the graph actually launched when the group's S changes between windows.
