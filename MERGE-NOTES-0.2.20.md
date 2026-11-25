@@ -582,3 +582,24 @@ on the verify timeout.  A 3-client run this time ended with exit -6 (the engine'
 #267 branch, so the plan wait did not get to print.  The hang therefore can surface as the
 progress watchdog before the verify timeout; the next probe should print the debug words
 from the watchdog path too (and/or sample them periodically from the stall report).
+
+### Big step + the last blocker (2026-11-24, late morning)
+
+Fixed/enabled:
+- `STRATA_VERIFY_DEVICE_HITS=0`: with the device-side expert plan off, pmtp two-slot groups
+  STOP DEADLOCKING for 2.7K-token prompts: 4 distinct clients all complete, decode 2.8-60
+  tok/s per request (variance from the serialized admissions).
+- drain gate: before a prompt read, pump is drained (`pump(false)` until no window in
+  flight) + `pmtp_settle()`; debug line confirms it fires (`drain dbg: pmtp 1 inflight 0`).
+
+Remaining blocker (7.3K+ token prompts, 4 clients):
+- `done: 4-6 tokens in 72 s (0.1 tok/s)` then the "no progress" watchdog;
+- stall report: `stage "reading the prompt (batched): finishing the chunk from token 0"`
+  and `the prompt's GPU work (GPU 1) had finished, but the engine was still waiting for
+  it`; the verify window `6 tokens at position 6355, step 22, served 22, plan 22,
+  copies 22` never completes (GPU rang all steps).
+So at >= ~7K the batched prompt read and the piped windows still interleave somewhere the
+drain gate does not cover (the read's own batch windows / the chunk completion wait), and a
+window's tail waits ~5 s per token before the watchdog.  Next: instrument the chunk
+completion wait (the stall line's own source) and the `copy_from_mapped` tail of the batch
+window; the read path at >= the chunk size is the remaining two-in-flight case.
