@@ -558,3 +558,18 @@ colouring vs the graph actually launched when the group's S changes between wind
 per-request 21.3-21.6 -> below the default pipelined (25.7).  With N=2 it was 165.8 median
 (p90 204); N=1 is worse.  The two-slot/group variant is the only one that would reach
 ~2x47 tok/s and it is the one that deadlocks.
+
+### Flag bisect results (2026-11-24, morning)
+
+`STRATA_RELEASE_ONE=a|b|in|flag` (releases only that word on the #267 path):
+- `=a` (flagA, the expert plan): no timeout within 60 s of the 3-client repro; the log shows
+  a completed pipelined batch ("13 group-steps, 44 rows in 448 ms, 26 of 31 proposals kept").
+- `=b`, `=in`, `=flag`: still `timed out at layer 23`.
+So the graph waits on **flagA** - the per-layer expert-plan word - with a `want` the host
+did not serve.  Raising flagA/B to `b_steps_+1` after batch_serve's loop did NOT fix it
+(reverted), so the wait is for a *layer* within the loop whose `want` the host skipped (a
+layer whose plan the pool published for a different group, or a step skipped when S shrank).
+
+Next instrument (not yet done): give `wait_flag_ge` a debug build that, when spinning
+>200 ms, writes `want`/`k` to a mapped word, and print it in the stall report.  That names
+the exact step to publish; then fix the host side of that step for piped-MTP windows.
