@@ -489,3 +489,23 @@ Night summary (all in this file, tree = verified build):
 Tomorrow: instrument the read path (`read_part`/admission) with the same trace dump, and
 compare against the one-group case (where reads complete) to find the two-in-flight
 difference; check `--no-prefill-borrow` and `STRATA_BATCH_CONCURRENT_READ=1` as switches.
+
+### Honest status at the end of the night (2026-11-24)
+
+Attempted further isolation for the two-group pmtp deadlock:
+- `--no-prefill-borrow`: still hangs.
+- `STRATA_PREFILL_CPU_SHARE=0`: still hangs.
+- `STRATA_PIPED_READ_PIECE=2048`: still hangs (layer 23, split 22).
+- The engine dies by watchdog before a ptrace/backtrace can be taken (yama=1, no root);
+  /proc sampling of the hung engine was not possible for the same reason (it had restarted).
+
+Verified, committed state:
+- HEAD = 9e318675b (+ this note): 0.1.66 merge, ggml/MMQ build, default pipelined batch.
+- Production binary `/opt/strata-merge/build-clang/strata`, 4-slot aggregate median 177.9,
+  correct output; TP build variant measured earlier (106-152 tok/s solo).
+- piped-MTP one group is correct and fast (47.4 tok/s per request at 2 clients); two
+  groups in flight deadlock during the read/decode overlap and were not fixed tonight.
+
+Next session starts from: reproduce with the engine launched under gdb directly (server's
+GEN/BGEN protocol over a FIFO) so backtraces are available without ptrace_scope; or patch
+`pump` to run one group at a time under pmtp (correct, slower) and then widen.
