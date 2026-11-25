@@ -573,3 +573,12 @@ layer whose plan the pool published for a different group, or a step skipped whe
 Next instrument (not yet done): give `wait_flag_ge` a debug build that, when spinning
 >200 ms, writes `want`/`k` to a mapped word, and print it in the stall report.  That names
 the exact step to publish; then fix the host side of that step for piped-MTP windows.
+
+### Plan-wait debug probe (2026-11-24, morning)
+
+Added `wait_flag_ge`'s debug words (`wait_dbg(want, flag)` in verify_kernels) and a print
+on the verify timeout.  A 3-client run this time ended with exit -6 (the engine's own
+"stopped making progress" abort) after generating 7 tokens in 65 s, without reaching the
+#267 branch, so the plan wait did not get to print.  The hang therefore can surface as the
+progress watchdog before the verify timeout; the next probe should print the debug words
+from the watchdog path too (and/or sample them periodically from the stall report).
