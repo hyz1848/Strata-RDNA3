@@ -551,3 +551,10 @@ beyond `b_steps_` (S smaller than the captured layout) - i.e. capture with a dif
 than the launch (the S=3 window reusing a 6-row graph) would wait forever on a step the
 host never serves.  That now looks like the strongest lead: verify `bkey(rows,S,hbase)`
 colouring vs the graph actually launched when the group's S changes between windows.
+
+### 1 slot/group with 1 draft also measured (2026-11-24, morning)
+
+`--batch-groups 4` + `STRATA_PIPED_MTP=1` (2 rows/group): 4x8K ok, wall 19.7-19.9 s,
+per-request 21.3-21.6 -> below the default pipelined (25.7).  With N=2 it was 165.8 median
+(p90 204); N=1 is worse.  The two-slot/group variant is the only one that would reach
+~2x47 tok/s and it is the one that deadlocks.
