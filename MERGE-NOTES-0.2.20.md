@@ -637,3 +637,20 @@ So it is specifically two pmtp groups in flight during a long decode.
 Tree = verified build + diagnostic probes; services stopped.  Next session: capture the
 `pm_copied`/chain state for both groups at the first stuck window (the 2-client work case
 is the control), then fix the cross-group event/flag ownership.
+
+### Kernel-level merge (2026-11-24) - the right direction
+
+Stopped config loops; did a per-file merge of decode kernels from `ours` into the 0.1.66
+tree, keeping 0.1.66 versions of files with new APIs (verify_kernels.cu, native_mmvq.cu,
+kv_stream.cu, dflash2.cu, qsa_select.cu, rdna_mmvq.cu, elementwise.cu, native_moe.cu,
+iq_kernels.cu).  Took ours': shared_expert.cu, qsa_decode_attn.cu, native_rope.cu,
+megakernel_gdn.cu, qsa_prompt_attn.cu, native_qsa_indexer.cu, route_prior.cu,
+dequant_bf16.cu.
+
+Measured (default pipelined batch 4, no pmtp, 4x8192/256):
+- batch rows/s 51.5 -> **67.3** (the fork's old 60-67 range) - the fork kernels recovered;
+- engine running=4 aggregate **181.3** (prev 177.9), per-request 25.8, wall 17.6 s
+  (old git baseline 193-206 / 27.5 / 17.0).
+Next: bisect those files (which one gave the rows/s jump), then selectively port the
+remaining 0.1.66 kernel versions (verify/native_mmvq/kv_stream/dflash2/ple) by adding the
+missing 0.1.66 APIs to ours' files instead of dropping them, to close the remaining ~12.
