@@ -17966,6 +17966,14 @@ int main(int argc, char** argv) {
                     for (int gi = 0; gi < (int) pg.size(); ++gi)
                         std::fprintf(stderr, " [%d:%d infl %d S %d]", gi, pg[(size_t) gi].stage,
                                      (int) pg[(size_t) gi].inflight, pg[(size_t) gi].S);
+                    if (pmtp) {
+                        std::fprintf(stderr, " | slots");
+                        for (size_t b = 0; b < bs.size(); ++b) {
+                            cudaError_t er = cudaEventQuery(pm_copied[b]);
+                            std::fprintf(stderr, " %zu:d%d/w%d/c%d/e%d", b, (int) pm_drafting[b], bs[b].w_n,
+                                         (int) bs[b].fly, er == cudaSuccess ? 1 : 0);
+                        }
+                    }
                     std::fprintf(stderr, "\n");
                 }
             }

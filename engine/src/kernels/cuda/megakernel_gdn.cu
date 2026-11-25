@@ -1,13 +1,14 @@
-// Copyright (c) 2026 Niko1221 and the Strata contributors
-// SPDX-License-Identifier: MIT
+// src/kernels/cuda/megakernel_gdn.cu - prototype 1 of the per-layer persistent kernel (megakernel.hpp).
 //
-// src/kernels/cuda/megakernel_gdn.cu - Per-layer persistent GDN dense chain for RDNA3/4 (STRATA_MEGAKERNEL=1).
-// Ported from MIT Strata-rdna3 (nicejunjie/Strata-rdna3) with CU-count-safe persistent grid sizing (12..96 CUs)
-// and WDDM-safe 150 ms wall_clock64() spin guards (rdna3_wddm_guard.hpp).
+// The bodies below are the window's kernels' (native_mmvq.cu: native_quantize_q8_1_kernel, SmallTraits<Q80Block, 8>,
+// native_mmvq_wave_exact_kernel; verify_kernels.cu: gdn_conv_l2_body, gdn_ab_body, gdn_step_norm_multi_kernel<true,
+// true>) with blockIdx / threadIdx replaced by the virtual block and thread the persistent block lends them, and the
+// conv body's conditional __syncthreads made unconditional (four 128-thread virtual blocks share one 512-thread block,
+// and a block straddling the q/k heads and the v heads would otherwise diverge at the barrier; every element's
+// arithmetic is unchanged).  mk_gdn_parity checks every output against the library's kernels bit for bit.
 #include "strata/kernels/megakernel.hpp"
-#include "strata/kernels/dp4a.hpp"
 #include "strata/kernels/q8_1_finite.hpp"
-#include "strata/kernels/rdna3_wddm_guard.hpp"
+#include "strata/kernels/dp4a.hpp"
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -20,8 +21,8 @@ namespace {
 #ifndef MK_TH
 #define MK_TH 512
 #endif
-constexpr int TH = MK_TH;
-constexpr int S = 128;
+constexpr int TH = MK_TH;        // the persistent block
+constexpr int S = 128;           // GDN state size
 constexpr int RG = 4;
 constexpr int RPG = S / RG;
 constexpr int WARP = 32;
@@ -29,47 +30,19 @@ constexpr int WARPS = 4;
 constexpr int Q8K = 32;
 constexpr int QUANT_THREADS = 256;
 
-struct Q81Block {
-    half2 ds;
-    int8_t qs[32];
-};
-struct Q80Block {
-    half d;
-    int8_t qs[32];
-};
+struct Q81Block { half2 ds; int8_t qs[32]; };
+struct Q80Block { half d; int8_t qs[32]; };
 static_assert(sizeof(Q81Block) == 36 && sizeof(Q80Block) == 34);
 
 __device__ __forceinline__ float warp_sum(float x) {
-#if defined(__HIP_PLATFORM_AMD__) && !defined(STRATA_HIP_GFX906)
-#define MK_DPP(val, c) __int_as_float(__builtin_amdgcn_update_dpp(0, __float_as_int(val), c, 0xf, 0xf, false))
-    x += MK_DPP(x, 0x161);
-    x += MK_DPP(x, 0x162);
-    x += MK_DPP(x, 0x164);
-    x += MK_DPP(x, 0x168);
-    x += __int_as_float(__builtin_amdgcn_permlanex16(0, __float_as_int(x), 0x76543210, 0xfedcba98, false, false));
-#undef MK_DPP
-    return x;
-#else
 #pragma unroll
-    for (int offset = WARP / 2; offset > 0; offset >>= 1) x += __shfl_xor_sync(0xffffffffu, x, offset, WARP);
+    for (int offset = WARP / 2; offset > 0; offset >>= 1) x += __shfl_xor_sync(0xffffffff, x, offset, WARP);
     return x;
-#endif
 }
 __device__ __forceinline__ float warp_max(float x) {
-#if defined(__HIP_PLATFORM_AMD__) && !defined(STRATA_HIP_GFX906)
-#define MK_DPP(val, c) __int_as_float(__builtin_amdgcn_update_dpp(0, __float_as_int(val), c, 0xf, 0xf, false))
-    x = fmaxf(x, MK_DPP(x, 0x161));
-    x = fmaxf(x, MK_DPP(x, 0x162));
-    x = fmaxf(x, MK_DPP(x, 0x164));
-    x = fmaxf(x, MK_DPP(x, 0x168));
-    x = fmaxf(x, __int_as_float(__builtin_amdgcn_permlanex16(0, __float_as_int(x), 0x76543210, 0xfedcba98, false, false)));
-#undef MK_DPP
-    return x;
-#else
 #pragma unroll
-    for (int offset = WARP / 2; offset > 0; offset >>= 1) x = fmaxf(x, __shfl_xor_sync(0xffffffffu, x, offset, WARP));
+    for (int offset = WARP / 2; offset > 0; offset >>= 1) x = fmaxf(x, __shfl_xor_sync(0xffffffff, x, offset, WARP));
     return x;
-#endif
 }
 __device__ __forceinline__ int load_int_b2(const void* ptr, int i32) {
     const auto* x = static_cast<const uint16_t*>(ptr);
@@ -78,9 +51,10 @@ __device__ __forceinline__ int load_int_b2(const void* ptr, int i32) {
     return value;
 }
 
+// ---- native_quantize_q8_1_kernel (one 256-thread virtual block over 256 elements)
 __device__ __forceinline__ void quant_body(const float* __restrict__ x, Q81Block* __restrict__ y, int n_in, int vb, int vtid) {
     const int i = vb * QUANT_THREADS + vtid;
-    if (i >= n_in) return;
+    if (i >= n_in) return;   // n_in is a multiple of 32: only whole warps return
     const float xi = x[i];
     const float amax = warp_max(fabsf(xi));
     const float sum = warp_sum(xi);
@@ -90,25 +64,29 @@ __device__ __forceinline__ void quant_body(const float* __restrict__ x, Q81Block
     if (i % Q8K == 0) y[i / Q8K].ds = q8_1_ds(d, sum);
 }
 
+// ---- SmallTraits<Q80Block, 8> + native_mmvq_wave_exact_kernel (one 256-thread virtual block = 8 rows, a wave each)
 struct Q80Traits {
-    static constexpr int DIV = 32;
-    static constexpr int T = 4;
-    static constexpr int KBY = 1;
-    static constexpr int BPI = 2 * WARPS * WARP / 8;
+    static constexpr int DIV = 32, T = 4, KBY = 1, BPI = 2 * WARPS * WARP / 8;
     __device__ static int kqs(int tid) { return 2 * (tid % 4); }
-    struct W {
-        int v[2];
-        float d0;
-    };
+    struct W { int v[2]; float d0; };
     __device__ static W load(const Q80Block* __restrict__ w, int iqs) {
         W r;
 #pragma unroll
         for (int i = 0; i < 2; ++i) r.v[i] = load_int_b2(w->qs, iqs + i);
-        r.d0 = __half2float(w->d);
+        r.d0 = w->d;
         return r;
     }
+    __device__ static float apply(const W& r, const Q81Block* __restrict__ x, int iqs) {
+        int sumi = 0;
+#pragma unroll
+        for (int i = 0; i < 2; ++i) {
+            const int u = reinterpret_cast<const int*>(x->qs)[iqs + i];
+            sumi = STRATA_DP4A(r.v[i], u, sumi);
+        }
+        const float d1 = __low2float(x->ds);
+        return r.d0 * d1 * float(sumi);
+    }
 };
-
 template <int NCOLS, bool MAP = false>
 __device__ __forceinline__ void gemv_q80_body(const Q80Block* __restrict__ w, const Q81Block* __restrict__ x,
                                               float* __restrict__ y, int n_in, int n_out, int vb, int vtid, int xs_zero = 0,
@@ -118,19 +96,17 @@ __device__ __forceinline__ void gemv_q80_body(const Q80Block* __restrict__ w, co
     const int row = vb * 8 + vtid / 32;
     if (row >= n_out) return;
     const int blocks_per_row = n_in / F::DIV;
+    // [claude] MAP (the TP alias map, a separate instantiation: the plain one is the code as before): this row's place
+    // in the full matrix, its pitch, and the block columns' offsets (equal ranges of a power-of-two width)
     int pitch = blocks_per_row, prow = row, cshift = 30, cgap = 0, cadd = 0;
-    if (MAP && mm != nullptr && mm->pitch > 0) {
+    if (MAP && mm->pitch > 0) {
         pitch = mm->pitch;
         int add = mm->radd[0];
 #pragma unroll
-        for (int k = 1; k < 8; ++k)
-            if (k < mm->nr && row >= mm->rlo[k]) add = mm->radd[k];
+        for (int k = 1; k < 8; ++k) if (k < mm->nr && row >= mm->rlo[k]) add = mm->radd[k];
         prow = row + add;
         cadd = mm->cadd;
-        if (mm->cw > 0) {
-            cshift = __ffs(mm->cw) - 1;
-            cgap = mm->cgap;
-        }
+        if (mm->cw > 0) { cshift = __ffs(mm->cw) - 1; cgap = mm->cgap; }
     }
     const Q80Block* __restrict__ wrow = w + std::size_t(prow) * pitch;
     const int x_stride = xs_zero ? 0 : n_in / Q8K;
@@ -141,6 +117,9 @@ __device__ __forceinline__ void gemv_q80_body(const Q80Block* __restrict__ w, co
         const int kqs = F::kqs(tid);
         for (int kbx = tid / F::T; kbx < blocks_per_row; kbx += F::BPI) {
             const F::W wv = F::load(MAP ? wrow + kbx + cadd + (kbx >> cshift) * cgap : w + std::size_t(row) * blocks_per_row + kbx, kqs);
+            // every column's activation loads are issued before the first dot product: inside the persistent kernel the
+            // compiler otherwise serializes them (one load, s_waitcnt vmcnt(0), one dot4 ... - 2x slower at NCOLS 8);
+            // the arithmetic per column is unchanged (same operands, same order)
             int u[NCOLS][2];
             float d1[NCOLS];
 #pragma unroll
@@ -169,6 +148,7 @@ __device__ __forceinline__ void gemv_q80_body(const Q80Block* __restrict__ w, co
     }
 }
 
+// ---- gdn_conv_l2_body (one 128-thread virtual block: channel block bx of token by); `part` per virtual block
 __device__ __forceinline__ void conv_body(float* part, int bx, int by, const float* hist, const float* __restrict__ qkv,
                                           const float* __restrict__ w, float* __restrict__ h, int C, int qk_heads, float eps,
                                           int vtid) {
@@ -183,6 +163,7 @@ __device__ __forceinline__ void conv_body(float* part, int bx, int by, const flo
     const float v0 = win[0], v1 = win[1], v2 = win[2], x = qkv[(size_t) t * C + c];
     float sum = v0 * w[c * 4] + v1 * w[c * 4 + 1] + v2 * w[c * 4 + 2] + x * w[c * 4 + 3];
     float y = sum / (1.0f + __expf(-sum));
+    // the L2 norm of the q/k heads: every virtual block takes the barrier (the v heads discard the sum)
     float sq = y * y;
     for (int o = 16; o > 0; o >>= 1) sq += __shfl_xor_sync(0xffffffffu, sq, o);
     if ((vtid & 31) == 0) part[vtid >> 5] = sq;
@@ -194,6 +175,7 @@ __device__ __forceinline__ void conv_body(float* part, int bx, int by, const flo
     h[(size_t) t * C + c] = y;
 }
 
+// ---- gdn_ab_body (one 64-thread virtual block: rows bx * 2, bx * 2 + 1 of [alpha rows | beta rows])
 template <int MAX_T>
 __device__ __forceinline__ void ab_body(int bx, const float* __restrict__ x, const uint16_t* __restrict__ wa,
                                         const uint16_t* __restrict__ wb, const float* __restrict__ dt,
@@ -242,14 +224,10 @@ __device__ __forceinline__ void ab_body(int bx, const float* __restrict__ x, con
     }
 }
 
-struct GdnQ81 {
-    half2 ds;
-    int8_t qs[32];
-};
+// ---- gdn_q8_1_store + gdn_step_norm_multi_kernel<ALL_OUT = true, Q = true> (one block per v-head; TH threads)
+struct GdnQ81 { half2 ds; int8_t qs[32]; };
 __device__ __forceinline__ void gdn_q8_1_store(GdnQ81* __restrict__ xq, size_t idx, float xi) {
-#if defined(__clang__)
 #pragma clang fp contract(off)
-#endif
     float amax = fabsf(xi), sum = xi;
 #pragma unroll
     for (int o = 16; o > 0; o >>= 1) amax = fmaxf(amax, __shfl_xor_sync(0xffffffffu, amax, o));
@@ -260,22 +238,16 @@ __device__ __forceinline__ void gdn_q8_1_store(GdnQ81* __restrict__ xq, size_t i
     xq[idx / 32].qs[idx % 32] = q;
     if (idx % 32 == 0) xq[idx / 32].ds = q8_1_ds(d, sum);
 }
-
-struct StepShared {
-    float sk[2][S];
-    float sq[2][S];
-    float red_kv[RG][S];
-    float red_o[RG][S];
-    float wsum[S / 32];
-};
-
+struct StepShared { float sk[2][S], sq[2][S], red_kv[RG][S], red_o[RG][S], wsum[S / 32]; };
 __device__ __forceinline__ void step_body(StepShared& sh, int head, const float* __restrict__ state,
                                           const float* __restrict__ hbuf, int C, const float* __restrict__ gate,
                                           const float* __restrict__ beta, const float* __restrict__ z,
                                           const float* __restrict__ gamma, float eps, float* __restrict__ y, int h_k, int h_v,
                                           int T, GdnQ81* __restrict__ xq, int tid) {
+    // The 512-thread kernel's RG = 4 row groups of RPG state rows; with TH threads a thread carries RPT = RG / (TH / S)
+    // of them (rg0, rg0 + RGT, ...), each with the kernel's own fmaf chain, and the cross-group sums keep their order.
     constexpr int RGT = TH / S, RPT = RG / RGT;
-    static_assert(RG % RGT == 0, "row groups must tile the block");
+    static_assert(RG % RGT == 0, "the row groups must tile the block");
     const int col = tid % S;
     const int rg0 = tid / S;
     const int qh = head % h_k;
@@ -348,53 +320,66 @@ __device__ __forceinline__ void step_body(StepShared& sh, int head, const float*
     }
 }
 
-#if defined(__HIP_PLATFORM_AMD__) && !defined(STRATA_HIP_GFX906)
-
+// ---- the persistent kernel: phases of work items pulled with an atomic, a counter per phase
+// counters: [0..4] items done per phase, [8..12] next item per phase
+// The scheduler's atomics are issued by the WHOLE first wave (lane 0 adds 1, the others 0) and broadcast with
+// readfirstlane, never under `if (threadIdx.x == 0)`: with a lane-0 branch clang 22 (ROCm 7.2) jump-threads lanes
+// 1..31 from the item's end straight back to grab's barrier + LDS load, so the wave loops there with lane 0 masked
+// off - and lane 0 holds the atomic they wait on (a SIMT forward-progress deadlock, even with one wave).  A wave-
+// uniform branch leaves no lane masked off while its wave loops.
 __device__ __forceinline__ bool wave0() { return threadIdx.x < WARP; }
 __device__ __forceinline__ unsigned one0() { return threadIdx.x == 0 ? 1u : 0u; }
 
 __device__ __forceinline__ int grab(unsigned* next, int* slot, unsigned k) {
+    // wave 0 pulls the block's next chunk of k items
     if (wave0()) *slot = (int) __builtin_amdgcn_readfirstlane(atomicAdd(next, threadIdx.x == 0 ? k : 0u));
     __syncthreads();
     const int it = __builtin_amdgcn_readfirstlane(*slot);
     __syncthreads();
     return it;
 }
-
-__device__ __forceinline__ void phase_wait(unsigned* done, unsigned items, unsigned* diag, unsigned phase,
-                                           unsigned* stall, uint64_t kernel_t0) {
+// (bounded: a phase that never completes sets counters[15] to the phase and the kernel goes on, so the host can read
+// the counters instead of hanging - a diagnostic, not a recovery)
+__device__ __forceinline__ void phase_wait(unsigned* done, unsigned items, unsigned* diag, unsigned phase, unsigned* stall) {
     if (wave0()) {
-        uint32_t iter = 0;
+        long spins = 0;
         while (__builtin_amdgcn_readfirstlane(__hip_atomic_load(done, __ATOMIC_ACQUIRE, __HIP_MEMORY_SCOPE_AGENT)) < items) {
             __builtin_amdgcn_s_sleep(1);
-            if ((iter & 4095u) == 4095u && stall != nullptr &&
-                __builtin_amdgcn_readfirstlane(__hip_atomic_load(stall, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)) != 0)
-                break;
-            if (rdna3_spin_expired(kernel_t0, iter, stall, phase + 1)) {
+            // [claude] review M7: a phase already reported stalled: the window is lost - no further 1-2 s spins.  Checked once
+            // every 4096 spins only: the word is mapped host memory, and a load each spin (a PCIe read) slowed every
+            // megakernel window 20-45% (UD-IQ4_XS / UD-Q4_K_XL 2-GPU, 2026-11-10); a healthy phase never reaches the first check
+            if ((spins & 4095) == 4095 && stall != nullptr &&
+                __builtin_amdgcn_readfirstlane(__hip_atomic_load(stall, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)) != 0) break;
+            if (++spins > (1l << 24)) {   // ~1-2 s: not every block is resident (see run_phase) - say so, never silently
                 atomicMax(diag, phase + 1);
+                if (stall != nullptr) __hip_atomic_store(stall, phase + 1, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
                 break;
             }
         }
     }
     __syncthreads();
     __threadfence();
-    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "agent");
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "agent");   // every wave: invalidate its L0/L1 lines of the producers' outputs
 }
-
 __device__ __forceinline__ void items_done(unsigned* done, unsigned n, bool all_fence = true) {
-    __syncthreads();
+    __syncthreads();   // (workgroup release: every wave's stores are out before wave 0 publishes)
     if (all_fence) __threadfence();
     if (wave0()) __hip_atomic_fetch_add(done, threadIdx.x == 0 ? n : 0u, __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
 }
-
+// Phase k over n items.  Default: static block-striding (block b takes items b, b + grid, ...) - every block must be
+// co-resident (the grid is the occupancy count of this NCOLS' instantiation; with 144 blocks launched and 96 resident
+// the conv once read the rows of blocks that had not started).  A wait that never completes writes `stall` (the
+// verifier fails the window) instead of producing a wrong one.  The done counters count ITEMS.  diag & 256 (or a
+// chunk): the dynamic scheduler - chunks pulled with one atomic each, safe on any residency, but 25-35% slower
+// (GEMV phase 47 vs 37 us at T=4: the per-chunk barriers and atomics).  `sync_between`: a barrier between items that
+// reuse LDS.
 template <class Body>
-__device__ __forceinline__ void run_phase(const MkGdnArgs& a, int k, unsigned n, unsigned chunk, int* slot, bool sync_between,
-                                          Body body) {
+__device__ __forceinline__ void run_phase(const MkGdnArgs& a, int k, unsigned n, unsigned chunk, int* slot, bool sync_between, Body body) {
     unsigned* done = a.counters + k;
     unsigned* next = a.counters + 8 + k;
     if (a.diag & 1) chunk = 1;
     if (a.chunk > 0) chunk = (unsigned) a.chunk;
-    if (!(a.diag & (256 | 1)) && a.chunk == 0) {
+    if (!(a.diag & (256 | 1)) && a.chunk == 0) {   // the default: static block-striding, items counted
         unsigned mine = 0;
         for (int it = (int) blockIdx.x; it < (int) n; it += (int) gridDim.x) {
             body(it);
@@ -412,10 +397,12 @@ __device__ __forceinline__ void run_phase(const MkGdnArgs& a, int k, unsigned n,
             body(it);
             if (sync_between) __syncthreads();
         }
-        items_done(done, (unsigned) (e - it0), !(a.diag & 128));
+        items_done(done, (unsigned) (e - it0), !(a.diag & 128));   // diag & 128: no all-wave fence
     }
 }
 
+// The last block out zeroes the counters for the next launch (stream order puts that before the next kernel), so
+// a launch needs no memset node.  counters[14] counts the blocks out; [5..7] are diagnostics and are cleared too; [15] (a stalled phase) stays.
 __device__ __forceinline__ void mk_exit(const MkGdnArgs& a) {
     __syncthreads();
     __threadfence();
@@ -428,122 +415,113 @@ __device__ __forceinline__ void mk_exit(const MkGdnArgs& a) {
     }
 }
 
+#ifndef MK_WAVES_PER_EU
+#define MK_WAVES_PER_EU 0
+#endif
+#if MK_WAVES_PER_EU > 0
+#define MK_WAVES_ATTR __attribute__((amdgpu_waves_per_eu(MK_WAVES_PER_EU, MK_WAVES_PER_EU)))
+#else
+#define MK_WAVES_ATTR
+#endif
 template <int NCOLS, bool MAP>
-__global__ void __launch_bounds__(TH) mk_gdn_kernel(MkGdnArgs a) {
+__global__ void __launch_bounds__(TH) MK_WAVES_ATTR mk_gdn_kernel(MkGdnArgs a) {
     __shared__ int slot;
     __shared__ float conv_part[TH / S][S / 32];
     __shared__ StepShared step_sh;
-    const uint64_t kernel_t0 = (uint64_t) wall_clock64();
     const int tid = (int) threadIdx.x;
     const int N = a.n_embd, C = a.conv_channels, ZV = a.value_dim, HK = a.h_k, HV = a.h_v;
     const int T = NCOLS;
     unsigned* done = a.counters;
+    unsigned* next = a.counters + 8;
     const Q81Block* xq = (const Q81Block*) a.xq;
     const Q81Block* yq = (const Q81Block*) a.yq;
-    if (wave0()) atomicAdd(a.counters + 6, one0());
+    if (wave0()) atomicAdd(a.counters + 6, one0());   // blocks that entered the kernel
     if (a.phases <= 0) { mk_exit(a); return; }
-
-    // Phase 0: q8_1 input quantization
+    // phase 0: the input's q8_1 image (256-thread virtual blocks, two per block)
     const unsigned n0 = (unsigned) ((T * N + (TH / QUANT_THREADS) * QUANT_THREADS - 1) / ((TH / QUANT_THREADS) * QUANT_THREADS));
-    if (!(a.diag & 32)) {
-        run_phase(a, 0, n0, 1, &slot, false, [&](int it) {
-            quant_body(a.x, (Q81Block*) a.xq, T * N, it * (TH / QUANT_THREADS) + tid / QUANT_THREADS, tid % QUANT_THREADS);
-        });
-    }
+    if (!(a.diag & 32)) run_phase(a, 0, n0, 1, &slot, false, [&](int it) {   // diag & 32 (STRATA_QFUSE): xq already holds the input's q8_1
+        quant_body(a.x, (Q81Block*) a.xq, T * N, it * (TH / QUANT_THREADS) + tid / QUANT_THREADS, tid % QUANT_THREADS);
+    });
     if (blockIdx.x == 0 && wave0()) atomicMax(a.counters + 5, 1u);
     if (a.phases <= 1) { mk_exit(a); return; }
-
-    // Phase 1: qkv + z Q8_0 projections and alpha/beta BF16 gates
-    const unsigned n_qkv = (unsigned) ((C / 8 + TH / 256 - 1) / (TH / 256));
-    const unsigned n_z = (unsigned) ((ZV / 8 + TH / 256 - 1) / (TH / 256));
+    // phase 1: the qkv and z projections (8 rows a wave group, two groups per block) and the a/b rows (64-thread
+    // virtual blocks, eight per block)
+    const unsigned n_qkv = (unsigned) ((C / 8 + TH / 256 - 1) / (TH / 256)), n_z = (unsigned) ((ZV / 8 + TH / 256 - 1) / (TH / 256));
     const unsigned n_ab = (unsigned) (((2 * HV + 1) / 2 + TH / 64 - 1) / (TH / 64));
     const unsigned n1 = n_qkv + n_z + n_ab;
-    if (!(a.diag & 32)) phase_wait(done + 0, n0, a.counters + 15, 0, a.stall, kernel_t0);
+    if (!(a.diag & 32)) phase_wait(done + 0, n0, a.counters + 15, 0, a.stall);
+    // diag & 4: a barrier between the GEMV items (the waves re-align on x); diag & 8: the qkv rows only
     run_phase(a, 1, (a.diag & 8) ? n_qkv : n1, 8, &slot, (a.diag & 4) != 0, [&](int it) {
         if (it < (int) n_qkv) {
-            gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_qkv, xq, a.qkv, N, C, it * (TH / 256) + tid / 256, tid % 256,
-                                      a.diag & 16, &a.m_qkv);
+            gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_qkv, xq, a.qkv, N, C, it * (TH / 256) + tid / 256, tid % 256, a.diag & 16, &a.m_qkv);
         } else if (it < (int) (n_qkv + n_z)) {
-            gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_z, xq, a.z, N, ZV, (it - (int) n_qkv) * (TH / 256) + tid / 256,
-                                      tid % 256, 0, &a.m_z);
+            gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_z, xq, a.z, N, ZV, (it - (int) n_qkv) * (TH / 256) + tid / 256, tid % 256, 0, &a.m_z);
         } else {
-            ab_body<NCOLS>((it - (int) (n_qkv + n_z)) * (TH / 64) + tid / 64, a.x, a.w_alpha, a.w_beta, a.dt, a.ssm_a,
-                           a.gate, a.beta, N, HV, tid % 64);
+            ab_body<NCOLS>((it - (int) (n_qkv + n_z)) * (TH / 64) + tid / 64, a.x, a.w_alpha, a.w_beta, a.dt, a.ssm_a, a.gate, a.beta,
+                           N, HV, tid % 64);
         }
     });
     if (blockIdx.x == 0 && wave0()) atomicMax(a.counters + 5, 2u);
     if (a.phases <= 2) { mk_exit(a); return; }
-
-    // Phase 2: conv1d + L2 norm
-    const unsigned n_conv_vb = (unsigned) ((C / S) * T);
-    const unsigned n2 = (n_conv_vb + TH / S - 1) / (TH / S);
-    phase_wait(done + 1, (a.diag & 8) ? n_qkv : n1, a.counters + 15, 1, a.stall, kernel_t0);
+    // phase 2: the conv + L2 norm (128-thread virtual blocks: channel block x token, four per block)
+    const unsigned n_conv_vb = (unsigned) ((C / S) * T), n2 = (n_conv_vb + TH / S - 1) / (TH / S);
+    phase_wait(done + 1, (a.diag & 8) ? n_qkv : n1, a.counters + 15, 1, a.stall);
     run_phase(a, 2, n2, 2, &slot, true, [&](int it) {
         const int vb = it * (TH / S) + tid / S;
         if (vb < (int) n_conv_vb)
             conv_body(conv_part[tid / S], vb % (C / S), vb / (C / S), a.hist, a.qkv, a.w_conv, a.h, C, 2 * HK, a.eps, tid % S);
         else
-            __syncthreads();
+            __syncthreads();   // (the body's barrier, so the block stays uniform)
     });
     if (blockIdx.x == 0 && wave0()) atomicMax(a.counters + 5, 3u);
     if (a.phases <= 3) { mk_exit(a); return; }
-
-    // Phase 3: GDN recurrence + output RMSNorm + q8_1 store
-    phase_wait(done + 2, n2, a.counters + 15, 2, a.stall, kernel_t0);
+    // phase 3: the recurrence + output norm + q8_1 image, one block per v-head
+    phase_wait(done + 2, n2, a.counters + 15, 2, a.stall);
     run_phase(a, 3, (unsigned) HV, 1, &slot, true, [&](int it) {
         step_body(step_sh, it, a.state, a.h, C, a.gate, a.beta, a.z, a.gamma, a.eps, a.y, HK, HV, T, (GdnQ81*) a.yq, tid);
     });
     if (blockIdx.x == 0 && wave0()) atomicMax(a.counters + 5, 4u);
     if (a.phases <= 4) { mk_exit(a); return; }
-
-    // Phase 4: Q8_0 out projection
+    // phase 4: the out projection
     const unsigned n4 = (unsigned) ((N / 8 + TH / 256 - 1) / (TH / 256));
-    phase_wait(done + 3, (unsigned) HV, a.counters + 15, 3, a.stall, kernel_t0);
+    phase_wait(done + 3, (unsigned) HV, a.counters + 15, 3, a.stall);
     run_phase(a, 4, n4, 4, &slot, (a.diag & 4) != 0, [&](int it) {
-        gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_out, yq, a.bo, ZV, N, it * (TH / 256) + tid / 256, tid % 256, 0,
-                                  &a.m_out);
+        gemv_q80_body<NCOLS, MAP>((const Q80Block*) a.w_out, yq, a.bo, ZV, N, it * (TH / 256) + tid / 256, tid % 256, 0, &a.m_out);
     });
     mk_exit(a);
 }
 
-int g_grid[64][2][9] = {};
-
+int g_grid[2][9] = {};   // per map / NCOLS: the register count (so the co-resident block count) differs per instantiation
 template <int NCOLS, bool MAP>
 void launch_m(const MkGdnArgs& a, cudaStream_t s) {
-    int dev = 0;
-    cudaGetDevice(&dev);
-    const int d = (dev >= 0 && dev < 64) ? dev : 0;
-    int& g_grid_n = g_grid[d][MAP ? 1 : 0][NCOLS];
+    int& g_grid_n = g_grid[MAP][NCOLS];
     if (g_grid_n == 0) {
-        int cus = 0, per = 0;
+        int dev = 0, cus = 0, per = 0;
+        cudaGetDevice(&dev);
         cudaDeviceGetAttribute(&cus, cudaDevAttrMultiProcessorCount, dev);
+#if defined(STRATA_USE_HIP)
         (void) hipOccupancyMaxActiveBlocksPerMultiprocessor(&per, mk_gdn_kernel<NCOLS, MAP>, TH, 0);
-#if defined(_WIN32)
-        constexpr bool kWin = true;
 #else
-        constexpr bool kWin = false;
+        (void) cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per, mk_gdn_kernel<NCOLS, MAP>, TH, 0);
 #endif
-        const PersistentGridPlan plan = compute_safe_persistent_grid(cus, per > 0 ? per : 1, 0, kWin);
-        g_grid_n = plan.safe_blocks > 0 ? plan.safe_blocks : 8;
+        g_grid_n = cus * (per > 0 ? per : 1);
+        if (g_grid_n <= 0) g_grid_n = 64;
     }
-    mk_gdn_kernel<NCOLS, MAP><<<a.grid > 0 ? a.grid : g_grid_n, TH, 0, s>>>(a);
+    // (no memset: the kernel's last block zeroes the counters on the way out; mk_counters_alloc zeroes them once)
+    mk_gdn_kernel<NCOLS, MAP><<<a.grid > 0 ? a.grid : g_grid_n, TH, 0, s>>>(a);   // (a.grid: diagnostics override)
 }
-
 template <int NCOLS>
 void launch(const MkGdnArgs& a, cudaStream_t s) {
     if (a.m_qkv.pitch > 0 || a.m_z.pitch > 0 || a.m_out.pitch > 0) launch_m<NCOLS, true>(a, s);
     else launch_m<NCOLS, false>(a, s);
 }
+}  // namespace
 
-#endif  // __HIP_PLATFORM_AMD__ && !STRATA_HIP_GFX906
-
+// [claude] the mapped Q8_0 GEMV outside the persistent kernel (8 rows a 256-thread block)
 template <int NCOLS>
-__global__ void __launch_bounds__(256) q80_mapped_kernel(const Q80Block* w, MkMat m, const Q81Block* x, float* y,
-                                                         int n_in, int n_out) {
+__global__ void __launch_bounds__(256) q80_mapped_kernel(const Q80Block* w, MkMat m, const Q81Block* x, float* y, int n_in, int n_out) {
     gemv_q80_body<NCOLS, true>(w, x, y, n_in, n_out, (int) blockIdx.x, (int) threadIdx.x, 0, &m);
 }
-
-}  // namespace
 
 void q80_mmvq_mapped(const void* w, const MkMat& m, const void* xq, float* y, int n_in, int n_out, int ncols, void* stream) {
     cudaStream_t s = (cudaStream_t) stream;
@@ -569,25 +547,10 @@ unsigned* mk_counters_alloc() {
     cudaMemset(p, 0, 64);
     return p;
 }
-
-int mk_gdn_grid(int n_tok) {
-#if defined(__HIP_PLATFORM_AMD__) && !defined(STRATA_HIP_GFX906)
-    int dev = 0;
-    cudaGetDevice(&dev);
-    const int d = (dev >= 0 && dev < 64) ? dev : 0;
-    return g_grid[d][0][n_tok < 1 ? 1 : (n_tok > 8 ? 8 : n_tok)];
-#else
-    (void) n_tok;
-    return 0;
-#endif
-}
+int mk_gdn_grid(int n_tok) { return g_grid[0][n_tok < 1 ? 1 : n_tok > 8 ? 8 : n_tok]; }
 
 void mk_gdn_dense(const MkGdnArgs& a, int n_tok, void* stream) {
-#if defined(__HIP_PLATFORM_AMD__) && !defined(STRATA_HIP_GFX906)
-    if (n_tok < 1 || n_tok > 8 || a.counters == nullptr) {
-        std::fprintf(stderr, "mk_gdn_dense: invalid arguments\n");
-        std::exit(1);
-    }
+    if (n_tok < 1 || n_tok > 8 || a.counters == nullptr) { std::fprintf(stderr, "mk_gdn_dense: invalid arguments\n"); std::exit(1); }
     cudaStream_t s = (cudaStream_t) stream;
     switch (n_tok) {
         case 1: launch<1>(a, s); break;
@@ -600,15 +563,7 @@ void mk_gdn_dense(const MkGdnArgs& a, int n_tok, void* stream) {
         default: launch<8>(a, s); break;
     }
     const cudaError_t e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        std::fprintf(stderr, "mk_gdn_dense: %s\n", cudaGetErrorString(e));
-        std::exit(1);
-    }
-#else
-    (void) a; (void) n_tok; (void) stream;
-    std::fprintf(stderr, "mk_gdn_dense: RDNA3/4 HIP build required\n");
-    std::exit(1);
-#endif
+    if (e != cudaSuccess) { std::fprintf(stderr, "mk_gdn_dense: %s\n", cudaGetErrorString(e)); std::exit(1); }
 }
 
 }  // namespace strata::kernels
