@@ -603,3 +603,19 @@ drain gate does not cover (the read's own batch windows / the chunk completion w
 window's tail waits ~5 s per token before the watchdog.  Next: instrument the chunk
 completion wait (the stall line's own source) and the `copy_from_mapped` tail of the batch
 window; the read path at >= the chunk size is the remaining two-in-flight case.
+
+### Post-read settle fixes the >=7K prompt READ; long bench decode still stalls (2026-11-24)
+
+`pmtp_settle()` after every prompt read (in `run`): 4 distinct 7.3K-token prompts now all
+complete (previously `503`/`no progress`).  With `max_tokens 32` no stall.
+The 4x8192/256 bench still degenerates: wall 56-75 s, `prompt=0`, and pmdbg shows the old
+shape again - `stage_group -1 1`, `group1 stage 1 inflight 1 S 6` - i.e. one 6-row window
+holds stage 1 and never finishes while group 0 waits; 30 batch captures happened first
+(S varies between 5 and 6, so each layout is captured once).
+So there are two distinct problems and one is fixed:
+1. prompt read > ~7K: FIXED by the post-read settle (verified, 4 distinct prompts).
+2. a 6-row pmtp window on stage 1 stuck in the graph during long decodes: open.
+Next: with `STRATA_VERIFY_DEVICE_HITS=0` already, instrument the window tail (copy) and the
+`S=6` launch: compare the first S=6 window that completes vs the stuck one; check
+`batch_key`/`capture_deferred` for the 6-row layout and the `pm_copied` event wait on the
+drafter stream (a stale event recorded before the read settle could strand it).
