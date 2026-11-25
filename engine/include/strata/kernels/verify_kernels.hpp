@@ -255,4 +255,7 @@ void window_ids(int32_t* steps, int n, int window, int32_t* ids, int64_t ids_str
 void window_ids_floor(int32_t* steps, int n, int window, int32_t* ids, int64_t ids_stride, const int32_t* floor_cell,
                       void* stream);
 
+/// debug: the last stuck plan wait (want, flag value); zeros if none
+void wait_dbg(unsigned long long out[2], void* stream);
+
 }  // namespace strata::kernels

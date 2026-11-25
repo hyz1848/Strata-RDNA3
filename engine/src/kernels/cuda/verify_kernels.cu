@@ -1394,6 +1394,8 @@ __device__ __forceinline__ unsigned long long strata_now_ns() {
     return t;
 }
 
+__device__ unsigned long long g_wait_dbg_want = 0, g_wait_dbg_val = 0;   // the plan wait, when it spins too long
+
 __global__ void wait_flag_ge_kernel(const volatile uint32_t* flag, uint32_t value) {
 #if defined(__HIPCC__) && defined(_WIN32)
     // Windows WDDM enforces a strict 2,000 ms TdrDelay; cap a single spin to 1,200 ms so an extreme
@@ -1406,7 +1408,11 @@ __global__ void wait_flag_ge_kernel(const volatile uint32_t* flag, uint32_t valu
         if ((++iter & 255u) == 0u && strata_now_ns() - t0 > kWddmTdrEscapeNs) break;
     }
 #else
-    while (*flag < value) strata_spin_pause();
+    unsigned long long it = 0;
+    while (*flag < value) {
+        strata_spin_pause();
+        if ((++it & 65535ull) == 0ull) { g_wait_dbg_want = value; g_wait_dbg_val = *flag; }
+    }
 #endif
     __threadfence_system();
 }
@@ -1463,6 +1469,14 @@ __global__ void wait_flag_ge_stamped_kernel(const volatile uint32_t* flag, uint3
     if (t_out != nullptr) *t_out = strata_now_ns();
 }
 }  // namespace
+
+void wait_dbg(unsigned long long out[2], void* stream) {
+    (void) stream;
+    unsigned long long w = 0, v = 0;
+    (void) cudaMemcpyFromSymbol(&w, g_wait_dbg_want, sizeof(w));
+    (void) cudaMemcpyFromSymbol(&v, g_wait_dbg_val, sizeof(v));
+    out[0] = w; out[1] = v;
+}
 
 void wait_handoff(const uint32_t* flag, uint32_t value, uint32_t* err, unsigned long long timeout_ns, void* stream) {
     wait_handoff_kernel<<<1, 1, 0, (cudaStream_t) stream>>>(flag, value, err, timeout_ns);
