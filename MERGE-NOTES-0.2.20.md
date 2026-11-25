@@ -509,3 +509,19 @@ Verified, committed state:
 Next session starts from: reproduce with the engine launched under gdb directly (server's
 GEN/BGEN protocol over a FIFO) so backtraces are available without ptrace_scope; or patch
 `pump` to run one group at a time under pmtp (correct, slower) and then widen.
+
+### Debug-tooling state (2026-11-24, final)
+
+- `gdb -p` is impossible (yama=1, no root).
+- `gdb` as the parent runs the engine fine, but batch-mode async interrupt does not
+  stop it (`interrupt -a` leaves "Selected thread is running"), so no host stack yet.
+  Next: run gdb in a pty (pexpect) and send Ctrl-C, or `set scheduler-locking`, or build
+  with `-g` and use `gcore` from inside gdb after `interrupt` works.
+- `/proc` sampling of the hung engine was inconclusive: the engine is lazily started by
+  the server, restarts on watchdog, and the sampling loop never caught a live instance at
+  the moment of reading /proc (log and ps disagree likely because the log lines seen were
+  from the earlier attempt).
+- Reproducer unchanged: /opt/strata-merge/test-s22.json (split 22, 16k ctx, pmtp 2 slots/
+  group, 3 clients x 8k prompts) -> `verify batch: timed out at layer 23`.
+
+Tree = verified build (verified 177.9 aggregate, correct). All services stopped.
