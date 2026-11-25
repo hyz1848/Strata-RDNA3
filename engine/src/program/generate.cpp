@@ -17939,6 +17939,21 @@ int main(int argc, char** argv) {
         // one turn: serve every running stage, hand finished groups on, start what can start
         auto pump = [&](bool may_start) -> bool {
             ++pipe_tick;
+            if (std::getenv("STRATA_PMDBG")) {
+                static Clock::time_point last_dbg{};
+                const auto now_dbg = Clock::now();
+                if (last_dbg.time_since_epoch().count() == 0) last_dbg = now_dbg;
+                if (now_dbg - last_dbg >= std::chrono::milliseconds(2000)) {
+                    last_dbg = now_dbg;
+                    std::fprintf(stderr, "pmdbg: tick %lld may_start %d stage_group", (long long) pipe_tick, (int) may_start);
+                    for (int k = 0; k < n_pipe; ++k) std::fprintf(stderr, " %d", stage_group[(size_t) k]);
+                    std::fprintf(stderr, " | groups");
+                    for (int gi = 0; gi < (int) pg.size(); ++gi)
+                        std::fprintf(stderr, " [%d:%d infl %d S %d]", gi, pg[(size_t) gi].stage,
+                                     (int) pg[(size_t) gi].inflight, pg[(size_t) gi].S);
+                    std::fprintf(stderr, "\n");
+                }
+            }
             const strata::program::PipeProbe::PumpScope p4_scope(p4);
             if (p4.timing()) {
                 int nb = 0, nf = 0;
@@ -18049,8 +18064,15 @@ int main(int argc, char** argv) {
                         if (pmtp) {   // a slot's proposal chain still running and no lookup for it: another group goes first
                             bool ready = true;
                             for (int t = 0; t < GS; ++t) {
-                                const int dr = pmtp_plan(gi * GS + t);
+                                int dr = pmtp_plan(gi * GS + t);
                                 if (dr < 0) return false;
+                                if (dr == 0 && !pipe_inflight()) {
+                                    // nothing is running to collect the chain behind: wait for it here, else no window
+                                    // ever starts (the chain's copy waits on a stage stream that has nothing in flight)
+                                    if (pmtp_poll_draft(gi * GS + t, true) < 0) return false;
+                                    dr = pmtp_plan(gi * GS + t);
+                                    if (dr < 0) return false;
+                                }
                                 if (dr == 0) { ready = false; break; }
                             }
                             if (!ready) continue;
@@ -21051,6 +21073,18 @@ int main(int argc, char** argv) {
                             return false;
                         };
                         while (bells.on.load(std::memory_order_acquire)) {
+                            if (std::getenv("STRATA_SERVE_DBG")) {
+                                static Clock::time_point lastb{};
+                                const auto nb = Clock::now();
+                                if (lastb.time_since_epoch().count() == 0) lastb = nb;
+                                if (nb - lastb >= std::chrono::milliseconds(2000)) {
+                                    lastb = nb;
+                                    std::fprintf(stderr, "bells: busy");
+                                    for (int k = 0; k < n_pipe; ++k)
+                                        std::fprintf(stderr, " %d", (int) stage_verifier(k).batch_busy());
+                                    std::fprintf(stderr, "\n");
+                                }
+                            }
                             bool busy = false;
                             for (int k = 0; k < n_pipe; ++k) {
                                 auto& vk = k == 0 ? ver : stages[(size_t) k - 1]->ver;

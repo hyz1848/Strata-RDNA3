@@ -5693,6 +5693,9 @@ int Verifier::batch_serve(PoolMultiFn pool, void* user) {
         if (*seq < want) return 0;
         const int S = last_t_;
         const Clock::time_point b = Clock::now();
+        const bool sdbg = std::getenv("STRATA_SERVE_DBG") != nullptr;
+        if (sdbg) std::fprintf(stderr, "srv: rank-serve lb %lld k %lld want %u seq %u S %d tgt %d\n",
+                               (long long) lb_, (long long) k, want, (unsigned) *seq, S, cur_layer_ + 1);
         cur_layer_ = want - 1;
         set_plan_slot(0);
         if (remote_opt_) remote_opt_->begin(h_w_, 0, S);
@@ -5765,10 +5768,11 @@ int Verifier::batch_poll(PoolMultiFn pool, void* user, std::string& err) {
             }
             if (now - last_ring() > std::chrono::seconds(20)) {
                 if (std::getenv("STRATA_BATCH_TRACE_DUMP")) {
-                    std::fprintf(stderr, "batch trace dump: lb %lld le %lld b_k %lld b_steps %lld seq %u served %u last_t %d running %d\n",
+                    std::fprintf(stderr, "batch trace dump: lb %lld le %lld b_k %lld b_steps %lld seq %u served %u last_t %d running %d groups %d split %d batch_rec %d\n",
                                  (long long) lb_, (long long) le_, (long long) b_k_, (long long) b_steps_,
                                  (unsigned) *(volatile uint32_t*) h_seq_, (unsigned) *(volatile uint32_t*) h_flag_,
-                                 last_t_, (int) b_running_);
+                                 last_t_, (int) b_running_, (int) (last_t_ >= 0 && last_t_ < 32 ? groups_[last_t_] : -1),
+                                 (int) split_, (int) batch_rec_);
                     trace_dump(stderr);
                 }
                 err = "verify batch: timed out at layer " + std::to_string(lb_ + b_k_) +
