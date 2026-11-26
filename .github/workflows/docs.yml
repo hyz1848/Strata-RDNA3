@@ -6,48 +6,7 @@ name: Docs
 # Archived pages (docs/history/, release notes, docs/bench-results) are not checked; their baseline is history/LINK-BASELINE.md.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/docs.yml
-      - '**/*.md'
-      - docs/data/release.json
-      - docs/data/capabilities.json
-      - terminal/data/settings-register.json
-      - tools/check
-      - tools/check_links.py
-      - tools/doc_pages.py
-      - tools/release_manifest.py
-      - tools/capability_table.py
-      - tools/settings_register.py
-      - terminal/strata_cli/__init__.py
-      - engine/CMakeLists.txt
-      - app/host/package.json
-      - app/desktop/package.json
-  pull_request:
-    paths:
-      - .github/workflows/docs.yml
-      - '**/*.md'
-      - docs/data/release.json
-      - docs/data/capabilities.json
-      - terminal/data/settings-register.json
-      - tools/check
-      - tools/check_links.py
-      - tools/doc_pages.py
-      - tools/release_manifest.py
-      - tools/capability_table.py
-      - tools/settings_register.py
-      - terminal/strata_cli/__init__.py
-      - engine/CMakeLists.txt
-      - app/host/package.json
-      - app/desktop/package.json
-
-permissions:
-  contents: read
-
-concurrency:
-  group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:   # a fork: the upstream full-matrix CI is run by hand only
 
 jobs:
   docs:

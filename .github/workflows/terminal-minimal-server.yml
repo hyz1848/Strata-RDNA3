@@ -1,32 +1,7 @@
 name: Minimal serving runtime
 
 on:
-  push:
-    paths:
-      - .github/workflows/terminal-minimal-server.yml
-      - terminal/requirements.txt
-      - terminal/strata.py
-      - terminal/strata_cli/**
-      - terminal/strata_control/**
-      - terminal/serve/**
-      - terminal/tests/terminal/test_runtime.py
-      - terminal/tools/minimal_server_smoke.py
-      - terminal/tools/strata_tokenizer.py
-  pull_request:
-    paths:
-      - .github/workflows/terminal-minimal-server.yml
-      - terminal/requirements.txt
-      - terminal/strata.py
-      - terminal/strata_cli/**
-      - terminal/strata_control/**
-      - terminal/serve/**
-      - terminal/tests/terminal/test_runtime.py
-      - terminal/tools/minimal_server_smoke.py
-      - terminal/tools/strata_tokenizer.py
-  workflow_dispatch:
-
-permissions:
-  contents: read
+  workflow_dispatch:   # a fork: the upstream full-matrix CI is run by hand only
 
 jobs:
   fake-engine:

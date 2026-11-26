@@ -10,49 +10,7 @@ name: Backend compile checks
 # Architectures are fewer than the release package's (compile time); the flags that decide which sources and defines are built are the release's.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/backends.yml
-      - engine/CMakeLists.txt
-      - engine/CMakePresets.json
-      - engine/cmake/**
-      - engine/src/**
-      - engine/include/**
-      - engine/third_party/**
-      - engine/sycl/**
-      - engine/metal/**
-      - terminal/setup.py
-      - tools/packaging/build_cuda_linux.sh
-      - tools/packaging/build_hip_linux.sh
-      - tools/packaging/build_sycl_linux.sh
-  pull_request:
-    paths:
-      - .github/workflows/backends.yml
-      - engine/CMakeLists.txt
-      - engine/CMakePresets.json
-      - engine/cmake/**
-      - engine/src/**
-      - engine/include/**
-      - engine/third_party/**
-      - engine/sycl/**
-      - engine/metal/**
-      - terminal/setup.py
-      - tools/packaging/build_cuda_linux.sh
-      - tools/packaging/build_hip_linux.sh
-      - tools/packaging/build_sycl_linux.sh
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: backends-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_MAXSIZE: 2G
+  workflow_dispatch:   # a fork: the upstream full-matrix CI is run by hand only
 
 jobs:
   cuda:

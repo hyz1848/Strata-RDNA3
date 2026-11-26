@@ -5,65 +5,7 @@ name: Checks
 # and the backend compile checks theirs (backends.yml).  Run the same thing by hand:  python tools/check --only <step>
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/check.yml
-      - tools/check
-      - requirements*.txt
-      - engine/CMakeLists.txt
-      - engine/CMakePresets.json
-      - engine/cmake/**
-      - engine/src/**
-      - engine/include/**
-      - engine/bench/micro/**
-      - engine/third_party/**
-      - tests/**
-      - terminal/serve/**
-      - terminal/strata.py
-      - terminal/setup.py
-      - terminal/strata_cli/**
-      - terminal/strata_control/**
-      - terminal/tools/**
-      - tools/packaging/**
-      - tools/docker/**
-      - app/host/**
-      - app/desktop/**
-      - engine/metal/**
-      - engine/sycl/**
-  pull_request:
-    paths:
-      - .github/workflows/check.yml
-      - tools/check
-      - requirements*.txt
-      - engine/CMakeLists.txt
-      - engine/CMakePresets.json
-      - engine/cmake/**
-      - engine/src/**
-      - engine/include/**
-      - engine/bench/micro/**
-      - engine/third_party/**
-      - tests/**
-      - terminal/serve/**
-      - terminal/strata.py
-      - terminal/setup.py
-      - terminal/strata_cli/**
-      - terminal/strata_control/**
-      - terminal/tools/**
-      - tools/packaging/**
-      - tools/docker/**
-      - app/host/**
-      - app/desktop/**
-      - engine/metal/**
-      - engine/sycl/**
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: checks-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:   # a fork: the upstream full-matrix CI is run by hand only
 
 jobs:
   linux:
