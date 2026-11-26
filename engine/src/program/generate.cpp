@@ -23910,6 +23910,10 @@ int main(int argc, char** argv) {
                 std::snprintf(read_txt, sizeof(read_txt), "%lld of %lld", (long long) read_n, (long long) fresh);
             else
                 std::snprintf(read_txt, sizeof(read_txt), "%lld", (long long) fresh);
+            // the machine line the server's Monitor reads (decode_ms was missing: its decode tile showed garbage)
+            std::printf("DONE %lld %lld %.1f %.1f - %lld %lld %lld\n", (long long) produced_n, (long long) n, prompt_ms,
+                        decode_ms, (long long) draft_accepted, (long long) draft_offered, (long long) resume);
+            std::fflush(stdout);
             std::fprintf(stderr, "strata serve: prompt %lld tokens = %lld reused + %s read in %.0f ms (%.1f tok/s), "
                                  "%lld generated in %.0f ms (%.1f tok/s), drafts accepted %lld of %lld, %zu checkpoints%s\n",
                          (long long) n, (long long) resume, read_txt, prompt_ms,

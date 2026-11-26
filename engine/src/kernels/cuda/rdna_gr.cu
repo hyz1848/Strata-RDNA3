@@ -28,6 +28,10 @@ constexpr int UC = 16;                    // up: columns per block (x 4 streams 
 constexpr int UB = N / UC;                // 160 blocks
 
 unsigned* g_gr_bar[64] = {};   // STRATA_GR_FUSED: per device {arrived, generation}, zeroed at load (rdna_r8_scratch_init)
+bool gr_fused_requested() {   // STRATA_GR_FUSED=1 only (any other value leaves the fused read off)
+    static const bool r = [] { const char* v = std::getenv("STRATA_GR_FUSED"); return v != nullptr && v[0] == '1'; }();
+    return r;
+}
 struct RdnaGr { FusedGrArgs a[kFusedGrMaxT]; float* part; float* ss; unsigned* bar = nullptr; };   // bar: STRATA_GR_FUSED grid barrier   // part [T][2*HC][PR], ss [T][2*HC]
 
 typedef unsigned int u32x4 __attribute__((ext_vector_type(4)));
@@ -645,7 +649,7 @@ void launch(const RdnaGr& m, cudaStream_t st, unsigned long long* sb, int si) {
         static const bool a8 = [] { const char* v = std::getenv("STRATA_GR_RDNA_A8"); return v && v[0] == '1'; }();
         if (a8) {
             static const bool inj_up = [] { const char* v = std::getenv("STRATA_GR_INJ_UP"); return v && v[0] == '1'; }();
-            static const bool fused = [] { const char* v = std::getenv("STRATA_GR_FUSED"); return v && v[0] == '1'; }();
+            const bool fused = gr_fused_requested();
             if (inj_up && fused && m.bar != nullptr && sb == nullptr) {   // one launch (the profiler's stamps need two)
                 rdna_gr_fused<T><<<(LR / (2 * WV) + 1) * 2 * HC, TH, 0, st>>>(m);
                 return;
@@ -699,13 +703,24 @@ __global__ void r8_to_bf16_kernel(const int8_t* __restrict__ q, const uint16_t* 
 uint16_t* g_r8_scratch[64][2] = {};
 }  // namespace
 
+// The fused read's grid barrier word: allocated once per card from the verifier's init, OUTSIDE any stream capture
+// (an allocation inside the 1-token window's capture ended the engine, #6730 / #6760)
+void rdna_gr_init() {
+    if (!gr_fused_requested()) return;
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64 || g_gr_bar[dev] != nullptr) return;
+    unsigned* bar = nullptr;
+    if (cudaMalloc((void**) &bar, 64) == cudaSuccess) {
+        if (cudaMemset(bar, 0, 64) == cudaSuccess) g_gr_bar[dev] = bar;
+        else cudaFree(bar);
+    }
+}
+
 bool rdna_r8_scratch_init(long long elems) {
     if (std::getenv("STRATA_GR_INJ_CHECK")) (void) inj_rec();   // debug buffer: mapped at load, not during a capture
     int dev = 0;
     if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) return false;
-    if (g_gr_bar[dev] == nullptr) {   // STRATA_GR_FUSED's barrier words
-        if (cudaMalloc(&g_gr_bar[dev], 64) != cudaSuccess || cudaMemset(g_gr_bar[dev], 0, 64) != cudaSuccess) return false;
-    }
+    rdna_gr_init();   // STRATA_GR_FUSED's barrier word (outside any capture)
     for (int r = 0; r < 2; ++r)
         if (g_r8_scratch[dev][r] == nullptr && cudaMalloc(&g_r8_scratch[dev][r], (size_t) elems * 2) != cudaSuccess) return false;
     return true;

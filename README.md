@@ -27,6 +27,38 @@ and four concurrent request slots on two RX 7900 XTX cards.
    batch slots for a lone request: 32K prompts prefill at about 5,200 tok/s (about 3,950 without
    it) while the four slots stay available for bursts.
 
+## Measured (this build: upstream v0.2.22 merged, piped MTP drafts)
+
+Two RX 7900 XTX, Qwen3.8-Flash-Next IQ3_S, with `strata-prod.json`
+(`--batch-mtp`, `STRATA_PIPED_MTP=2`, `STRATA_BATCH_SELF_COMMIT=0`,
+`STRATA_PREFILL_CPU_SHARE_MAX=8192`, `STRATA_PREFILL_LEND_PCT=93`, `--prefill 18432`).
+
+### Single request: prefill (the prompt read)
+
+| prompt | prefill tok/s |
+|---:|---:|
+| 16K | 3,299 |
+| 32K | 4,198 |
+| 64K | 4,787 - 4,971 |
+| 128K | 5,683 - 5,792 |
+| 256K | 5,613 - 5,715 |
+
+Prefill rises with prompt length as the fixed costs amortize; 128K and up is at the
+fork's ~5,700 tok/s.
+
+### Four concurrent 8K prompts, 256 output tokens each
+
+| metric | value |
+|---|---|
+| wall | 16.3 - 17.3 s |
+| aggregate end-to-end | 58 - 63 tok/s |
+| per-request decode | 26.5 - 29.3 tok/s |
+| engine running=4 (the Monitor's number) | median 190 - 223, p90 247 - 294 |
+
+Both metrics are at or above the 0.1.59 fork baseline (decode median 193.8 / p90 209.1;
+prefill about 5,700 at 128K). The piped batch groups draft with the serial path's
+synchronous MTP draft: 73% of the proposals are kept, 77 rows/s.
+
 ## Credits
 
 This project is a merge, not a rewrite. It would not exist without:

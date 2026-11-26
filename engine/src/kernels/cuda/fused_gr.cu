@@ -3284,7 +3284,10 @@ int fused_gr_variant() {
     return e != nullptr && (e[0] == '1' || e[0] == '2') ? env_variant() : kHcPlain;
 }
 
+void rdna_gr_init();   // HIP, STRATA_GR_FUSED=1: the fused read's barrier word (outside any capture)
+
 void fused_gr_check() {
+    rdna_gr_init();    // #6730 / #6760: allocated before any graph capture asks
     int dev = 0;
     cudaGetDevice(&dev);
     (void) gr_v3_default_on(dev);   // decided here, before any graph capture asks
