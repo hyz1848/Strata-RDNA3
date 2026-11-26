@@ -37,6 +37,8 @@ Two RX 7900 XTX, Qwen3.8-Flash-Next IQ3_S, with `strata-prod.json`
 
 | prompt | prefill tok/s |
 |---:|---:|
+| 4K | 1,550 |
+| 8K | 2,628 |
 | 16K | 3,299 |
 | 32K | 4,198 |
 | 64K | 4,787 - 4,971 |
@@ -55,9 +57,11 @@ fork's ~5,700 tok/s.
 | per-request decode | 26.5 - 29.3 tok/s |
 | engine running=4 (the Monitor's number) | median 190 - 223, p90 247 - 294 |
 
-Both metrics are at or above the 0.1.59 fork baseline (decode median 193.8 / p90 209.1;
-prefill about 5,700 at 128K). The piped batch groups draft with the serial path's
-synchronous MTP draft: 73% of the proposals are kept, 77 rows/s.
+The decode is at the 0.1.59 fork baseline on the median (193.8) and above it on p90 (209.1);
+the prefill matches the fork from 128K. The earlier chart's 32K and 64K points (about 5,400
+and 5,700) were its two-card DP; this build reads them on one card (the layer split), so
+those two are lower here (4,181 and 4,914). The piped batch groups draft with the serial
+path's synchronous MTP draft: 73% of the proposals are kept, 77 rows/s.
 
 ## Credits
 
