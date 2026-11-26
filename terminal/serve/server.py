@@ -6608,6 +6608,10 @@ class Service:
                                 # Inkling's pictures are ONE placeholder id each in `ids`; the engine expands them to the picture's tokens and its DONE line
                                 # counts those (the prompt it really read): that is the prompt_tokens a client is told
                                 image_prompt_tokens = int(last.get("prompt_tokens") or 0)
+                            if not last.get("decode_ms") and st.get("first_token"):
+                                # a --batch slot's DONE line is not read by the request path (its BT/BDONE are): the
+                                # server's own first-token clock gives the decode time the Monitor needs
+                                last["decode_ms"] = max(0.0, (time.time() - st["first_token"]) * 1000.0)
                             self.history.append({
                                 "id": request_id,
                                 "projection": (sampling or {}).get("experimental_speed_projection") is not False
