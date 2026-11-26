@@ -654,3 +654,50 @@ Measured (default pipelined batch 4, no pmtp, 4x8192/256):
 Next: bisect those files (which one gave the rows/s jump), then selectively port the
 remaining 0.1.66 kernel versions (verify/native_mmvq/kv_stream/dflash2/ple) by adding the
 missing 0.1.66 APIs to ours' files instead of dropping them, to close the remaining ~12.
+
+## 2026-11-26: v0.2.22 merged, decode target met (state for the next session)
+
+Tree: /opt/strata-merge, branch merge-0219, pushed to hyz/main as 90e450629.
+
+Commits on top of the fork:
+- 748252c32 piped MTP drafts + pmtp hand-off fixes
+- dd9b3297c merge upstream v0.2.22 (570 files; our GR kernels kept + its HIP capture fix ported)
+- 6321a772c the GR kernels + the upstream rdna_gr_init + the server DONE line + README numbers
+- 0d57a9df7 serve: the Monitor's decode time for a --batch slot (fallback to the server's clock)
+- dbbb9240a ci: the upstream full-matrix workflows are workflow_dispatch only (no failure mail)
+- 90e450629 docs: track docs/media/bench-2x7900xtx.svg (it was untracked, the force push lost it)
+
+What made decode reach the target: the pipelined batch groups draft with the SERIAL path's
+synchronous MTP draft (Prefill/MtpDrafter::draft), not the async chain.  73% of the proposals
+are kept, 77 rows/s.  Measured, 4x8192/256, monitor running=4: median 190-223, p90 247-294
+(the 0.1.59 baseline: 193.8 / 209.1).  wall 16.3-17.7 s, per-request 26.5-29.3.
+
+Config (strata-prod.json, untracked): --batch-mtp, STRATA_PIPED_MTP=2,
+STRATA_BATCH_SELF_COMMIT=0, STRATA_PREFILL_CPU_SHARE_MAX=8192, STRATA_PREFILL_LEND_PCT=93,
+--prefill 18432.  CPU_SHARE_MAX sweep at 128K: 1024 5690, 8192 5758, 16384 5739, 32768 5702.
+--prefill: 8192 5011, 18432 5758, 32768 5489.
+
+Single-request prefill (our build): 4K 1550, 8K 2628, 16K 3269, 32K 4181, 64K 4914,
+128K 5683-5792, 256K 5613-5715.  The old chart's 32K/64K ~5,400-5,700 was the fork's DP
+(two cards on alternating chunks); ours is single-card (layer split: the layers run in
+sequence through the two cards), so 128K+ matches but the mid lengths do not.
+
+Open: the DP prompt path (both cards on alternating chunks).  Ported and WORKING
+("DP prompt path linked", "DP prompt read: 15201 tokens") but SLOWER than one card:
+16K 2674-2860 vs 3269, because a card computing a layer it does not own streams that
+layer's experts over PCIe.  The fork's fix is the DP SHARE (src/prefill/prefill.cpp:
+dp_share_env(), DpLink::req[2]/sum_k[2], ds_keep/ds_help): the peer card computes its own
+experts for the other card's chunk.  Its gate is `dp_share_env() && mmq_plan().any`, so it
+needs the MMQ backend (the strata_mmq target of the earlier session: old ggml-cuda-tq
+template instances + quantize.cu + ggml_cuda_host.cu + mmq_kq_lib.cu, LANGUAGE HIP, the
+STRATA_MMQ_TQ/TQP defines) plus STRATA_DP_SHARE=1 and STRATA_DP_PREFILL=1.
+Files to re-apply for that: fork src/prefill/prefill.cpp, kernels.cu, gemm.cu,
+moe_fused_iq.cu, moe_f16_common.cuh, src/core/native_dense.cpp, their headers (with the
+compat stubs already written), the F32 inject upload in native_dense (the GGUF stores
+*_inject.weight as F32; the stage needs it), and the DP setup + the run_dp call in
+generate.cpp (both the run lambda and the batched reader thread).
+
+Also open: a lone request lands in a batch slot, so its decode is 78-120 tok/s (the old
+chart's solo path: 119-146); the 4-slot aggregate is what beats the baseline.
+
+Security: the GitHub token pasted in the session should be revoked.
