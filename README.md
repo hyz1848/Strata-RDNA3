@@ -43,7 +43,6 @@ Two RX 7900 XTX, Qwen3.8-Flash-Next IQ3_S, with `strata-prod.json`
 | 32K | 4,198 |
 | 64K | 4,787 - 4,971 |
 | 128K | 5,683 - 5,792 |
-| 256K | 5,613 - 5,715 |
 
 Prefill rises with prompt length as the fixed costs amortize; 128K and up is at the
 fork's ~5,700 tok/s.
