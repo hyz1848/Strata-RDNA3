@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" font-family="Inter,Segoe UI,Arial,sans-serif">
 <rect width="100%" height="100%" fill="#ffffff"/>
-<text x="30" y="30" font-size="16" font-weight="700" fill="#12181f">Qwen3.8-Flash-Next IQ3_S on 2x RX 7900 XTX - 256k context, DP on</text>
+<text x="30" y="30" font-size="16" font-weight="700" fill="#12181f">Qwen3.8-Flash-Next IQ3_S on 2x RX 7900 XTX - 256k context, layer split (no DP)</text>
 <rect x="70" y="70" width="400" height="300" fill="#fff" stroke="#c9ced6"/>
 <line x1="70" y1="370.0" x2="470" y2="370.0" stroke="#eceff3"/>
 <text x="62" y="374.0" text-anchor="end" font-size="11" fill="#66707d">0</text>
@@ -14,22 +14,28 @@
 <text x="62" y="74.0" text-anchor="end" font-size="11" fill="#66707d">6000</text>
 <line x1="86.5" y1="70" x2="86.5" y2="370" stroke="#f2f4f7"/>
 <text x="86.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">4K</text>
-<line x1="177.0" y1="70" x2="177.0" y2="370" stroke="#f2f4f7"/>
-<text x="177.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">8K</text>
-<line x1="268.1" y1="70" x2="268.1" y2="370" stroke="#f2f4f7"/>
-<text x="268.1" y="388" text-anchor="middle" font-size="11" fill="#66707d">16K</text>
-<line x1="359.5" y1="70" x2="359.5" y2="370" stroke="#f2f4f7"/>
-<text x="359.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">32K</text>
+<line x1="147.25" y1="70" x2="147.25" y2="370" stroke="#f2f4f7"/>
+<text x="147.25" y="388" text-anchor="middle" font-size="11" fill="#66707d">8K</text>
+<line x1="208" y1="70" x2="208" y2="370" stroke="#f2f4f7"/>
+<text x="208" y="388" text-anchor="middle" font-size="11" fill="#66707d">16K</text>
+<line x1="268.75" y1="70" x2="268.75" y2="370" stroke="#f2f4f7"/>
+<text x="268.75" y="388" text-anchor="middle" font-size="11" fill="#66707d">32K</text>
+<line x1="329.5" y1="70" x2="329.5" y2="370" stroke="#f2f4f7"/>
+<text x="329.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">64K</text>
+<line x1="390.25" y1="70" x2="390.25" y2="370" stroke="#f2f4f7"/>
+<text x="390.25" y="388" text-anchor="middle" font-size="11" fill="#66707d">128K</text>
 <line x1="451.0" y1="70" x2="451.0" y2="370" stroke="#f2f4f7"/>
-<text x="451.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">64K</text>
+<text x="451.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">256K</text>
 <text x="270" y="408" text-anchor="middle" font-size="12" fill="#3b4450">prompt tokens (actual)</text>
 <text x="270" y="56" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2733">Prefill tok/s, single request</text>
-<polyline points="86.5,269.0 177.0,240.6 268.1,189.5 359.5,98.8 451.0,84.8" fill="none" stroke="#0ab887" stroke-width="2.4"/>
-<circle cx="86.5" cy="269.0" r="3.2" fill="#0ab887"/>
-<circle cx="177.0" cy="240.6" r="3.2" fill="#0ab887"/>
-<circle cx="268.1" cy="189.5" r="3.2" fill="#0ab887"/>
-<circle cx="359.5" cy="98.8" r="3.2" fill="#0ab887"/>
-<circle cx="451.0" cy="84.8" r="3.2" fill="#0ab887"/>
+<polyline points="86.5,292.5 147.25,238.6 208,206.6 268.75,161.0 329.5,124.3 390.25,81.4 451.0,86.8" fill="none" stroke="#0ab887" stroke-width="2.4"/>
+<circle cx="86.5" cy="292.5" r="3.2" fill="#0ab887"/>
+<circle cx="147.25" cy="238.6" r="3.2" fill="#0ab887"/>
+<circle cx="208" cy="206.6" r="3.2" fill="#0ab887"/>
+<circle cx="268.75" cy="161.0" r="3.2" fill="#0ab887"/>
+<circle cx="329.5" cy="124.3" r="3.2" fill="#0ab887"/>
+<circle cx="390.25" cy="81.4" r="3.2" fill="#0ab887"/>
+<circle cx="451.0" cy="86.8" r="3.2" fill="#0ab887"/>
 <line x1="78" y1="84" x2="100" y2="84" stroke="#0ab887" stroke-width="2.4"/>
 <text x="106" y="88" font-size="11" fill="#3b4450">prefill</text>
 <rect x="560" y="70" width="400" height="300" fill="#fff" stroke="#c9ced6"/>
@@ -45,47 +51,45 @@
 <text x="552" y="74.0" text-anchor="end" font-size="11" fill="#66707d">220</text>
 <line x1="576.5" y1="70" x2="576.5" y2="370" stroke="#f2f4f7"/>
 <text x="576.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">4K</text>
-<line x1="667.0" y1="70" x2="667.0" y2="370" stroke="#f2f4f7"/>
-<text x="667.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">8K</text>
-<line x1="758.1" y1="70" x2="758.1" y2="370" stroke="#f2f4f7"/>
-<text x="758.1" y="388" text-anchor="middle" font-size="11" fill="#66707d">16K</text>
-<line x1="849.5" y1="70" x2="849.5" y2="370" stroke="#f2f4f7"/>
-<text x="849.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">32K</text>
+<line x1="637.2" y1="70" x2="637.2" y2="370" stroke="#f2f4f7"/>
+<text x="637.2" y="388" text-anchor="middle" font-size="11" fill="#66707d">8K</text>
+<line x1="698" y1="70" x2="698" y2="370" stroke="#f2f4f7"/>
+<text x="698" y="388" text-anchor="middle" font-size="11" fill="#66707d">16K</text>
+<line x1="758.8" y1="70" x2="758.8" y2="370" stroke="#f2f4f7"/>
+<text x="758.8" y="388" text-anchor="middle" font-size="11" fill="#66707d">32K</text>
+<line x1="819.5" y1="70" x2="819.5" y2="370" stroke="#f2f4f7"/>
+<text x="819.5" y="388" text-anchor="middle" font-size="11" fill="#66707d">64K</text>
+<line x1="880.2" y1="70" x2="880.2" y2="370" stroke="#f2f4f7"/>
+<text x="880.2" y="388" text-anchor="middle" font-size="11" fill="#66707d">128K</text>
 <line x1="941.0" y1="70" x2="941.0" y2="370" stroke="#f2f4f7"/>
-<text x="941.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">64K</text>
+<text x="941.0" y="388" text-anchor="middle" font-size="11" fill="#66707d">256K</text>
 <text x="760" y="408" text-anchor="middle" font-size="12" fill="#3b4450">prompt tokens (actual)</text>
 <text x="760" y="56" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2733">Decode tok/s</text>
-<polyline points="576.5,91.4 667.0,88.4 758.1,93.7 849.5,95.6 941.0,101.1" fill="none" stroke="#e03131" stroke-width="2.8"/>
-<circle cx="576.5" cy="91.4" r="3.2" fill="#e03131"/>
-<circle cx="667.0" cy="88.4" r="3.2" fill="#e03131"/>
-<circle cx="758.1" cy="93.7" r="3.2" fill="#e03131"/>
-<circle cx="849.5" cy="95.6" r="3.2" fill="#e03131"/>
-<circle cx="941.0" cy="101.1" r="3.2" fill="#e03131"/>
-<polyline points="576.5,171.0 667.0,174.6 758.1,172.0 849.5,178.1 941.0,183.9" fill="none" stroke="#7c3aed" stroke-width="2.2"/>
-<circle cx="576.5" cy="171.0" r="3.2" fill="#7c3aed"/>
-<circle cx="667.0" cy="174.6" r="3.2" fill="#7c3aed"/>
-<circle cx="758.1" cy="172.0" r="3.2" fill="#7c3aed"/>
-<circle cx="849.5" cy="178.1" r="3.2" fill="#7c3aed"/>
-<circle cx="941.0" cy="183.9" r="3.2" fill="#7c3aed"/>
-<polyline points="576.5,198.0 667.0,200.6 758.1,200.9 849.5,207.5 941.0,202.4" fill="none" stroke="#2f6fed" stroke-width="2.2"/>
-<circle cx="576.5" cy="198.0" r="3.2" fill="#2f6fed"/>
-<circle cx="667.0" cy="200.6" r="3.2" fill="#2f6fed"/>
-<circle cx="758.1" cy="200.9" r="3.2" fill="#2f6fed"/>
-<circle cx="849.5" cy="207.5" r="3.2" fill="#2f6fed"/>
-<circle cx="941.0" cy="202.4" r="3.2" fill="#2f6fed"/>
-<polyline points="576.5,325.8 667.0,332.5 758.1,338.6 849.5,343.7 941.0,353.1" fill="none" stroke="#e8590c" stroke-width="2.2"/>
-<circle cx="576.5" cy="325.8" r="3.2" fill="#e8590c"/>
-<circle cx="667.0" cy="332.5" r="3.2" fill="#e8590c"/>
-<circle cx="758.1" cy="338.6" r="3.2" fill="#e8590c"/>
-<circle cx="849.5" cy="343.7" r="3.2" fill="#e8590c"/>
-<circle cx="941.0" cy="353.1" r="3.2" fill="#e8590c"/>
+<polyline points="576.5,99.2 637.2,109.0 698,101.6 758.8,100.5 819.5,110.9" fill="none" stroke="#e03131" stroke-width="2.8"/>
+<circle cx="576.5" cy="99.2" r="3.2" fill="#e03131"/>
+<circle cx="637.2" cy="109.0" r="3.2" fill="#e03131"/>
+<circle cx="698" cy="101.6" r="3.2" fill="#e03131"/>
+<circle cx="758.8" cy="100.5" r="3.2" fill="#e03131"/>
+<circle cx="819.5" cy="110.9" r="3.2" fill="#e03131"/>
+<polyline points="576.5,206.4 637.2,215.9 698,245.9 758.8,240.5 819.5,262.3 880.2,296.4 941.0,345.5" fill="none" stroke="#7c3aed" stroke-width="2.2"/>
+<circle cx="576.5" cy="206.4" r="3.2" fill="#7c3aed"/>
+<circle cx="637.2" cy="215.9" r="3.2" fill="#7c3aed"/>
+<circle cx="698" cy="245.9" r="3.2" fill="#7c3aed"/>
+<circle cx="758.8" cy="240.5" r="3.2" fill="#7c3aed"/>
+<circle cx="819.5" cy="262.3" r="3.2" fill="#7c3aed"/>
+<circle cx="880.2" cy="296.4" r="3.2" fill="#7c3aed"/>
+<circle cx="941.0" cy="345.5" r="3.2" fill="#7c3aed"/>
+<polyline points="576.5,303.9 637.2,302.4 698,302.9 758.8,302.6 819.5,305.0" fill="none" stroke="#e8590c" stroke-width="2.2"/>
+<circle cx="576.5" cy="303.9" r="3.2" fill="#e8590c"/>
+<circle cx="637.2" cy="302.4" r="3.2" fill="#e8590c"/>
+<circle cx="698" cy="302.9" r="3.2" fill="#e8590c"/>
+<circle cx="758.8" cy="302.6" r="3.2" fill="#e8590c"/>
+<circle cx="819.5" cy="305.0" r="3.2" fill="#e8590c"/>
 <line x1="568" y1="84" x2="590" y2="84" stroke="#e03131" stroke-width="2.8"/>
 <text x="596" y="88" font-size="11" fill="#3b4450">4 concurrent, aggregate</text>
 <line x1="568" y1="101" x2="590" y2="101" stroke="#7c3aed" stroke-width="2.2"/>
-<text x="596" y="105" font-size="11" fill="#3b4450">single, code</text>
-<line x1="568" y1="118" x2="590" y2="118" stroke="#2f6fed" stroke-width="2.2"/>
-<text x="596" y="122" font-size="11" fill="#3b4450">single, prose</text>
-<line x1="568" y1="135" x2="590" y2="135" stroke="#e8590c" stroke-width="2.2"/>
-<text x="596" y="139" font-size="11" fill="#3b4450">4 concurrent, per request</text>
-<text x="30" y="420" font-size="10" fill="#8a94a3">Median of 3 single runs / 2 bursts (4K-64K). Aggregate is the engine metrics tok/s summed over the four slots (decode phase); end-to-end (prefill included) is in the table. Temperature 0, thinking off, 256 output tokens.</text>
+<text x="596" y="105" font-size="11" fill="#3b4450">single request</text>
+<line x1="568" y1="118" x2="590" y2="118" stroke="#e8590c" stroke-width="2.2"/>
+<text x="596" y="122" font-size="11" fill="#3b4450">4 concurrent, per request</text>
+<text x="30" y="420" font-size="10" fill="#8a94a3">This build (upstream v0.2.22 merged): single request medians; 4-concurrent aggregate is the engine metrics tok/s summed over the four slots (4K-64K), per request its decode phase. The 32K/64K prefill of the earlier chart was the two-card DP; this one is the layer split. Temperature 0, thinking off.</text>
 </svg>
