@@ -760,9 +760,15 @@ void Verifier::diag(std::FILE* f) const {
     // #251: outside a verify stage these are the LAST window's numbers (it finished), not the stalled work's
     const char* where = progress().where.load();
     const bool current = where != nullptr && std::strncmp(where, "verify window", 13) == 0;
+    const cudaError_t q_cs = cs_ ? cudaStreamQuery(cs_) : cudaSuccess;
+    const cudaError_t q_cp = copy_ ? cudaStreamQuery(copy_) : cudaSuccess;
     std::fprintf(f, "  verify window%s: %d tokens at position %lld, host at layer step %u; the GPU rang %u; flags: "
-                    "served %u, plan (A) %u, copies (B) %u\n", current ? "" : " (last window, not the current stage)",
-                 last_t_, (long long) last_pos0_, cur_layer_ + 1, rd(h_seq_), rd(h_flag_), rd(h_flagA_), rd(h_flagB_));
+                    "served %u, plan (A) %u, copies (B) %u; stream %s, copy %s, b_k %lld/%lld, running %d\n",
+                 current ? "" : " (last window, not the current stage)",
+                 last_t_, (long long) last_pos0_, cur_layer_ + 1, rd(h_seq_), rd(h_flag_), rd(h_flagA_), rd(h_flagB_),
+                 q_cs == cudaErrorNotReady ? "busy" : "idle", q_cp == cudaErrorNotReady ? "busy" : "idle",
+                 (long long) b_k_.load(std::memory_order_acquire), (long long) b_steps_,
+                 (int) b_running_.load(std::memory_order_acquire));
     trace_dump(f);   // #649: STRATA_VERIFY_TRACE=1 only
 }
 
